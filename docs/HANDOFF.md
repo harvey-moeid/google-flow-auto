@@ -69,3 +69,17 @@ At the end of each work session update:
 - Security review:
 - Blockers and decisions:
 - Next concrete task:
+
+## Session log
+
+### Session 1 — Phase 0 (stabilize the starter)
+- Current phase: Phase 0 complete pending merge of PR #3; next is Phase 1.
+- Branch / PR / commits: `fix/phase-0-stabilize`, PR #3; `18bff81` (build/lockfile), `207edb3` (strict slots + tests), `5ea1efb` (CI, gitignore).
+- Root cause of red CI: `@cloudflare/workers-types@^4.20261114.0` does not exist on npm (ETARGET); npm workspaces made it fail every `npm install`. `deploy.yml` had the same defect.
+- Files changed: `package.json`, `package-lock.json`, `.nvmrc`, `apps/api/package.json`, `apps/pwa/package.json`, `apps/pwa/src/App.tsx` (type `slots` as `Account[]`), `apps/pwa/src/vite-env.d.ts`, `engine/accounts/slots.py`, `engine/accounts/profile_manager.py`, `engine/tests/*`, `engine/pytest.ini`, `engine/requirements-dev.txt`, package `__init__.py` files, `.github/workflows/{test,deploy}.yml`, `.gitignore`.
+- Bug fixed: `acct-1` / `acct-001` previously aliased onto the `slot-01` profile directory. Only `acct-01`..`acct-10` (ASCII) are accepted now.
+- Tests run and exact results: GitHub Actions `Test` run 43527002541 on `5ea1efb` = success (`pwa-build`: npm ci, typecheck API, build PWA; `python-check`: compileall, pytest, dry-run smoke). Local on Python 3.11.18: 70 passed.
+- Deployment/staging status: none; `deploy.yml` was changed but not run (needs Cloudflare secrets and a real D1 id).
+- Security review: `.worker-data/`, `.dev.vars`, `.wrangler/` are now gitignored; no credentials or profile data tracked. Still open: `VITE_API_TOKEN` is baked into the PWA bundle, CORS reflects the request origin, no real auth (all Phase 1).
+- Blockers and decisions: `workers-types` moved to major 5 (latest on npm); `tsc --noEmit` passes on the current API code. Live adapters remain disabled.
+- Next concrete task: Phase 1 — Cloudflare Access/OIDC identity, remove `VITE_API_TOKEN`, strict CORS allowlist, input validation, rate limits.
