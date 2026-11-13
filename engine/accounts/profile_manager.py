@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from playwright.async_api import async_playwright, BrowserContext
+from .slots import slot_from_account_id
 
 class ProfileManager:
     """Separate persistent Chromium profile per account. Store only on encrypted trusted disk."""
@@ -15,11 +16,7 @@ class ProfileManager:
         self._pw = await async_playwright().start()
 
     def _profile_path(self, account_id: str) -> Path:
-        if not account_id.startswith("acct-") or not account_id[5:].isdigit():
-            raise ValueError("Invalid account slot identifier")
-        slot = int(account_id[5:])
-        if slot < 1 or slot > 10:
-            raise ValueError("Account slot must be between 1 and 10")
+        slot = slot_from_account_id(account_id)
         path = self.root / f"slot-{slot:02d}"
         path.mkdir(parents=True, exist_ok=True)
         return path
