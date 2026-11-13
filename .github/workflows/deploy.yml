@@ -2,7 +2,7 @@ name: Deploy Cloudflare API
 on:
   push:
     branches: [main]
-    paths: ["apps/api/**", "cloudflare/**"]
+    paths: ["apps/api/**", "cloudflare/**", "package.json", "package-lock.json"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,9 +13,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - working-directory: apps/api
-        run: npm install
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Typecheck API before deploy
+        run: npm run typecheck:api
       - name: Deploy Worker
         working-directory: apps/api
         run: npx wrangler deploy

@@ -1,1 +1,17 @@
-{"name":"google-flow-auto","private":true,"workspaces":["apps/pwa","apps/api"],"scripts":{"build:pwa":"npm --workspace apps/pwa run build","dev:pwa":"npm --workspace apps/pwa run dev"}}
+{
+  "name": "google-flow-auto",
+  "private": true,
+  "workspaces": [
+    "apps/pwa",
+    "apps/api"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:pwa": "npm --workspace apps/pwa run build",
+    "dev:pwa": "npm --workspace apps/pwa run dev",
+    "typecheck:api": "npm --workspace apps/api run typecheck",
+    "check": "npm run typecheck:api && npm run build:pwa"
+  }
+}
