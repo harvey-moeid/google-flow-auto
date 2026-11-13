@@ -12,6 +12,9 @@
     "build:pwa": "npm --workspace apps/pwa run build",
     "dev:pwa": "npm --workspace apps/pwa run dev",
     "typecheck:api": "npm --workspace apps/api run typecheck",
-    "check": "npm run typecheck:api && npm run build:pwa"
+    "check": "npm run typecheck:api && npm run test:api && npm run test:scripts && npm run build:pwa && npm run check:secrets",
+    "test:api": "npm --workspace apps/api run test",
+    "test:scripts": "node --test \"scripts/*.test.mjs\"",
+    "check:secrets": "node scripts/check-bundle-secrets.mjs"
   }
 }

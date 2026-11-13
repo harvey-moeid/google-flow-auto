@@ -18,6 +18,8 @@ jobs:
       - run: npm ci
       - name: Typecheck API before deploy
         run: npm run typecheck:api
+      - name: Test API before deploy
+        run: npm run test:api
       - name: Deploy Worker
         working-directory: apps/api
         run: npx wrangler deploy
