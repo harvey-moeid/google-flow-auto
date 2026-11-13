@@ -1,0 +1,15 @@
+name = "google-flow-auto-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-14"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "google-flow-auto"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "google-flow-auto-media"
+
+[vars]
+APP_ENV = "production"
