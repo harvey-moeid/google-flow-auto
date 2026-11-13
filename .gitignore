@@ -3,11 +3,11 @@ dist/
 .env
 .env.*
 !.env.example
-__pycache__/
-.pytest_cache/
 .venv/
-venv/
+__pycache__/
+*.pyc
+.playwright-profiles/
 playwright/.auth/
-browser-profiles/
-storage-state*.json
-*.log
+*.sqlite3
+*.db
+*.zip
