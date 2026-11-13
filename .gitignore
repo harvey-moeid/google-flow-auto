@@ -11,3 +11,12 @@ playwright/.auth/
 *.sqlite3
 *.db
 *.zip
+
+# Worker data holds browser profiles/cookies: never commit
+.worker-data/
+.dev.vars
+.wrangler/
+.pytest_cache/
+.mypy_cache/
+*.log
+*.tsbuildinfo
