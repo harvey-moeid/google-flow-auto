@@ -1,0 +1,7 @@
+# Copy to apps/api/.dev.vars (gitignored) for local `wrangler dev` ONLY.
+# DEV_AUTH_EMAIL is honoured only when APP_ENV is exactly "development" AND the request
+# host is localhost/127.0.0.1. It is ignored in any deployed environment.
+APP_ENV=development
+DEV_AUTH_EMAIL=dev@example.test
+# The Vite dev server proxies /api to the Worker but keeps its own Origin header.
+ALLOWED_ORIGINS=http://localhost:5173

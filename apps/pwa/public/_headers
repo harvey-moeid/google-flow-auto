@@ -1,0 +1,9 @@
+# Cloudflare Pages response headers for the PWA (static assets contain no secrets).
+# connect-src 'self' assumes the API is served same-origin under /api (the documented setup).
+# If you point VITE_API_URL at another origin, add that origin to connect-src.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()

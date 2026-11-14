@@ -17,8 +17,14 @@ jobs:
       - run: npm ci
       - name: Typecheck API
         run: npm run typecheck:api
+      - name: Test API (auth, CORS, validation, rate limit, audit)
+        run: npm run test:api
+      - name: Test repository scripts
+        run: npm run test:scripts
       - name: Build PWA
         run: npm run build:pwa
+      - name: Scan built PWA assets and frontend wiring for secrets
+        run: npm run check:secrets
   python-check:
     runs-on: ubuntu-latest
     defaults:

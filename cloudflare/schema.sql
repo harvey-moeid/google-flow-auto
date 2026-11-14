@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, project_id TEXT NOT NULL R
 CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status,created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_account ON jobs(account_id,created_at);
 CREATE INDEX IF NOT EXISTS idx_scenes_project ON scenes(project_id,scene_order);
+CREATE INDEX IF NOT EXISTS idx_projects_created ON projects(created_at,id);
 CREATE TABLE IF NOT EXISTS worker_lease (lease_name TEXT PRIMARY KEY CHECK(lease_name='global'), holder_id TEXT NOT NULL, job_id TEXT, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS audit_events (id TEXT PRIMARY KEY, account_id TEXT, job_id TEXT, event_type TEXT NOT NULL, detail_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at,id);
 INSERT OR IGNORE INTO accounts(id,slot,label,status) VALUES ('acct-01',1,'Google Account 01','needs_login'),('acct-02',2,'Google Account 02','needs_login'),('acct-03',3,'Google Account 03','needs_login'),('acct-04',4,'Google Account 04','needs_login'),('acct-05',5,'Google Account 05','needs_login'),('acct-06',6,'Google Account 06','needs_login'),('acct-07',7,'Google Account 07','needs_login'),('acct-08',8,'Google Account 08','needs_login'),('acct-09',9,'Google Account 09','needs_login'),('acct-10',10,'Google Account 10','needs_login');
