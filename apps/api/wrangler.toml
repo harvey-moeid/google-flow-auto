@@ -20,7 +20,7 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "google-flow-auto"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "660dfd32-956e-4919-9da5-526954f0665c"
 # Versioned migrations (Phase 2): `npx wrangler d1 migrations apply google-flow-auto --remote`
 migrations_dir = "../../cloudflare/migrations"
 
