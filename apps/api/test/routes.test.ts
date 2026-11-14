@@ -289,7 +289,7 @@ test("job listing: pagination in queue order and status filter validation", asyn
   assert.ok(hasIssue(bad, "status", "invalid_value"));
 });
 
-test("cancel: queued jobs can be cancelled once; other states and unknown ids are refused", async () => {
+test("cancel: queued jobs are cancelled once; active jobs get a cancel request; finished and unknown are refused", async () => {
   const h = await createHarness();
   makeAccountReady(h);
   const projectId = await createProject(h);
@@ -306,11 +306,26 @@ test("cancel: queued jobs can be cancelled once; other states and unknown ids ar
   const cancelAudits = h.db.raw.prepare("SELECT COUNT(*) AS c FROM audit_events WHERE event_type='job.cancelled'").get();
   assert.equal(Number(cancelAudits?.c), 1, "cancel is audited exactly once");
 
+  // A running job may be mid-generation: the owner only records a request (202); the worker acknowledges it.
   const running = await queueJob(h, { project_id: projectId, account_id: "acct-01", idempotency_key: "cancel-key-0002" });
   h.db.raw.prepare("UPDATE jobs SET status='running' WHERE id=?").run(running.json.id);
-  const refused = await authed(h, { method: "POST", path: `/api/jobs/${running.json.id}/cancel` });
+  const requested = await authed(h, { method: "POST", path: `/api/jobs/${running.json.id}/cancel` });
+  assert.equal(requested.status, 202);
+  assert.deepEqual(requested.json, { id: running.json.id, status: "running", cancel_requested: true });
+  const flagged = h.db.raw.prepare("SELECT status,cancel_requested FROM jobs WHERE id=?").get(running.json.id);
+  assert.equal(flagged?.status, "running", "the job keeps running until the worker acknowledges");
+  assert.equal(Number(flagged?.cancel_requested), 1);
+  const repeated = await authed(h, { method: "POST", path: `/api/jobs/${running.json.id}/cancel` });
+  assert.equal(repeated.status, 202);
+  assert.equal(repeated.json.already_requested, true);
+
+  // Final states cannot be cancelled.
+  const finished = await queueJob(h, { project_id: projectId, account_id: "acct-01", idempotency_key: "cancel-key-0003" });
+  h.db.raw.prepare("UPDATE jobs SET status='succeeded' WHERE id=?").run(finished.json.id);
+  const refused = await authed(h, { method: "POST", path: `/api/jobs/${finished.json.id}/cancel` });
   assert.equal(refused.status, 409);
-  assert.equal(h.db.raw.prepare("SELECT status FROM jobs WHERE id=?").get(running.json.id)?.status, "running");
+  assert.equal(refused.json.error.code, "job_not_cancellable");
+  assert.equal(h.db.raw.prepare("SELECT status FROM jobs WHERE id=?").get(finished.json.id)?.status, "succeeded");
 
   const unknown = await authed(h, { method: "POST", path: "/api/jobs/11111111-2222-4333-8444-555555555555/cancel" });
   assert.equal(unknown.status, 404);
