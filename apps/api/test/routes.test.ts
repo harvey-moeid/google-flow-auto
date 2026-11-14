@@ -47,7 +47,7 @@ test("PATCH /api/accounts/:id updates label/email, can clear email, and audits w
   assert.equal(audit[0].account_id, "acct-03");
   const detail = JSON.parse(audit[0].detail_json);
   assert.deepEqual(detail.fields, ["label", "email"]);
-  assert.equal(detail.actor, "owner@example.com");
+  assert.equal(detail.actor, "owner");
   assert.ok(!audit[0].detail_json.includes("person@example.com"), "audit must not store the email value");
 });
 
@@ -346,7 +346,7 @@ test("GET /api/audit lists recent events newest first with actor and request id"
   const types = res.json.items.map((item: { event_type: string }) => item.event_type);
   assert.deepEqual(new Set(types), new Set(["project.created", "job.queued"]));
   for (const item of res.json.items) {
-    assert.equal(item.detail.actor, "owner@example.com");
+    assert.equal(item.detail.actor, "owner");
     assert.match(item.detail.request_id, /^[0-9a-f-]{36}$/);
     assert.ok(!("detail_json" in item));
   }

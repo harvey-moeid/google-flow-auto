@@ -1,7 +1,9 @@
 # Copy to apps/api/.dev.vars (gitignored) for local `wrangler dev` ONLY.
-# DEV_AUTH_EMAIL is honoured only when APP_ENV is exactly "development" AND the request
-# host is localhost/127.0.0.1. It is ignored in any deployed environment.
+# APP_ENV=development makes the rate limit bindings optional; it does not weaken authentication.
 APP_ENV=development
-DEV_AUTH_EMAIL=dev@example.test
+OWNER_PASSWORD=change-me-dev-password
+SESSION_SECRET=change-me-dev-session-secret-0123456789abcdef
+# Optional: enables /api/worker/* for a local worker (at least 32 characters).
+# WORKER_TOKEN=change-me-dev-worker-token-0123456789abcdef
 # The Vite dev server proxies /api to the Worker but keeps its own Origin header.
 ALLOWED_ORIGINS=http://localhost:5173

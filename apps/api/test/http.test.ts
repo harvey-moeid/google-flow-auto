@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AUD, BASE, OWNER, authed, call, count, createHarness } from "./helpers.ts";
+import { BASE, OWNER_PASSWORD, authed, buildRequest, call, count, createHarness, send } from "./helpers.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -8,11 +8,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 test("placeholder configuration fails closed with 503 and leaks no values", async () => {
   const h = await createHarness({
-    CF_ACCESS_TEAM_DOMAIN: "REPLACE_WITH_TEAM.cloudflareaccess.com",
-    CF_ACCESS_AUD: "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG",
-    ALLOWED_EMAILS: "REPLACE_WITH_OWNER_EMAIL",
+    OWNER_PASSWORD: "REPLACE_WITH_OWNER_PASSWORD",
+    SESSION_SECRET: "REPLACE_WITH_RANDOM_SESSION_SECRET_0123456789",
+    WORKER_TOKEN: "REPLACE_WITH_WORKER_TOKEN_0123456789abcdef",
   });
-  const res = await call(h, { path: "/api/me", token: await h.token() });
+  const res = await call(h, { path: "/api/me", session: await h.session() });
   assert.equal(res.status, 503);
   assert.equal(res.json.error.code, "server_misconfigured");
   assert.ok(!res.text.includes("REPLACE_WITH"), "response must not echo configuration values");
@@ -22,21 +22,46 @@ test("placeholder configuration fails closed with 503 and leaks no values", asyn
 });
 
 for (const [name, override] of [
-  ["missing rate limit binding", { RL_WRITE: undefined }],
-  ["team domain outside cloudflareaccess.com", { CF_ACCESS_TEAM_DOMAIN: "evil.example.com" }],
-  ["malformed AUD tag", { CF_ACCESS_AUD: "short" }],
-  ["empty email allowlist", { ALLOWED_EMAILS: "" }],
+  ["missing read rate limit binding", { RL_READ: undefined }],
+  ["missing write rate limit binding", { RL_WRITE: undefined }],
+  ["missing login rate limit binding", { RL_LOGIN: undefined }],
+  ["worker token without a worker rate limit binding", { RL_WORKER: undefined }],
+  ["missing owner password", { OWNER_PASSWORD: "" }],
+  ["owner password shorter than 10 characters", { OWNER_PASSWORD: "short" }],
+  ["missing session secret", { SESSION_SECRET: "" }],
+  ["session secret shorter than 32 characters", { SESSION_SECRET: "short-secret" }],
+  ["worker token shorter than 32 characters", { WORKER_TOKEN: "short-token" }],
+  ["worker token with illegal characters", { WORKER_TOKEN: "worker token with spaces 0123456789abcdef" }],
   ["wildcard CORS origin", { ALLOWED_ORIGINS: "*" }],
   ["origin with a path", { ALLOWED_ORIGINS: "https://app.example.com/ui" }],
   ["non-https non-localhost origin", { ALLOWED_ORIGINS: "http://app.example.com" }],
 ] as Array<[string, Record<string, unknown>]>) {
   test(`invalid configuration is rejected: ${name}`, async () => {
     const h = await createHarness(override);
-    const res = await call(h, { path: "/api/me", token: await h.token() });
+    const res = await call(h, { path: "/api/me", session: await h.session() });
     assert.equal(res.status, 503);
     assert.equal(res.json.error.code, "server_misconfigured");
   });
 }
+
+test("development mode makes the rate limit bindings optional; production never does", async () => {
+  const dev = await createHarness({
+    APP_ENV: "development",
+    RL_READ: undefined,
+    RL_WRITE: undefined,
+    RL_LOGIN: undefined,
+    RL_WORKER: undefined,
+  });
+  assert.equal((await authed(dev, { path: "/api/me" })).status, 200);
+  const prod = await createHarness({ APP_ENV: "staging", RL_READ: undefined });
+  assert.equal((await authed(prod, { path: "/api/me" })).status, 503);
+});
+
+test("a trailing newline from a shell pipe does not break the secrets", async () => {
+  const h = await createHarness({ OWNER_PASSWORD: `${OWNER_PASSWORD}\n` });
+  const res = await call(h, { method: "POST", path: "/api/login", body: { password: OWNER_PASSWORD } });
+  assert.equal(res.status, 200);
+});
 
 // ---------- headers and request ids ----------
 
@@ -180,14 +205,8 @@ test("oversized bodies are rejected with 413 (declared length and streamed)", as
       controller.close();
     },
   });
-  const token = await h.token();
-  const request = new Request(`${BASE}/api/projects`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "cf-access-jwt-assertion": token },
-    body: stream,
-    duplex: "half",
-  } as RequestInit);
-  const streamed = await h.app.fetch(request, h.env as never);
+  const request = buildRequest({ method: "POST", path: "/api/projects", session: await h.session() }, stream);
+  const streamed = await send(h, request);
   assert.equal(streamed.status, 413);
   assert.equal(count(h.db, "projects"), 0);
 });
@@ -207,8 +226,8 @@ test("rate limits are keyed by identity, separate for reads and writes, and retu
   const h = await createHarness();
   await authed(h, { path: "/api/me" });
   await authed(h, { method: "POST", path: "/api/projects", body: { name: "a" } });
-  assert.deepEqual(h.limiter.read, [`r:${OWNER}`]);
-  assert.deepEqual(h.limiter.write, [`w:${OWNER}`]);
+  assert.deepEqual(h.limiter.read, ["r:owner"]);
+  assert.deepEqual(h.limiter.write, ["w:owner"]);
 
   h.limiter.allowWrite = false;
   const blocked = await authed(h, { method: "POST", path: "/api/projects", body: { name: "b" } });
@@ -226,8 +245,4 @@ test("a failing rate limiter does not take the API down", async () => {
   const h = await createHarness();
   h.limiter.throws = true;
   assert.equal((await authed(h, { path: "/api/me" })).status, 200);
-});
-
-test("audience tag constant is a 64-char hex string", () => {
-  assert.match(AUD, /^[a-f0-9]{64}$/);
 });

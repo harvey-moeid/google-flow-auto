@@ -78,7 +78,7 @@ function isUniqueViolation(error: unknown): boolean {
 async function me(ctx: Ctx): Promise<Response> {
   // Owner routes are only reachable by owner identities (enforced in the request pipeline).
   if (ctx.identity.kind !== "owner") throw new HttpError(403, "forbidden", "This identity is not allowed to use this endpoint");
-  return jsonResponse({ email: ctx.identity.email, source: ctx.identity.source });
+  return jsonResponse({ name: ctx.identity.name, source: ctx.identity.source });
 }
 
 async function listAccounts(ctx: Ctx): Promise<Response> {

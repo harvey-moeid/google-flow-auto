@@ -1,7 +1,8 @@
 /**
- * API client. Authentication is handled entirely by Cloudflare Access (an HttpOnly cookie
- * scoped to the app hostname); this bundle carries NO credentials and sends no Authorization
- * header. Never add a token, key or secret here: everything in a PWA bundle is public.
+ * API client. The owner signs in with a password (`login`); the server answers with an HttpOnly
+ * session cookie that JavaScript cannot read, so this bundle carries NO credentials, stores no token
+ * and sends no Authorization header. Never add a token, key or secret here: everything in a PWA
+ * bundle is public. The password is only ever sent to /api/login and is not kept after the call.
  */
 export type Account = { id: string; slot: number; label: string; email?: string | null; status: string };
 export type Job = { id: string; status: string; account_slot: number; account_label: string; engine: string };
@@ -23,15 +24,14 @@ export class ApiError extends Error {
 }
 
 const MESSAGES: Record<string, string> = {
-  session_expired: "Sesi login berakhir. Muat ulang halaman untuk login lagi.",
   network: "Tidak dapat menghubungi server. Periksa koneksi atau muat ulang halaman.",
-  unauthorized: "Anda belum login. Muat ulang halaman untuk login lagi.",
-  forbidden: "Akun ini tidak diizinkan menggunakan aplikasi.",
+  unauthorized: "Sesi login berakhir. Silakan masuk lagi.",
+  invalid_credentials: "Password salah.",
+  forbidden: "Akses ditolak untuk fungsi ini.",
   origin_not_allowed: "Asal permintaan ditolak oleh server.",
-  rate_limited: "Terlalu banyak permintaan. Coba lagi sebentar lagi.",
+  rate_limited: "Terlalu banyak percobaan. Coba lagi sebentar lagi.",
   validation_failed: "Data tidak valid. Periksa isian Anda.",
   server_misconfigured: "Server belum dikonfigurasi dengan benar.",
-  auth_unavailable: "Layanan autentikasi sedang tidak tersedia. Coba lagi nanti.",
 };
 
 export function describeError(error: unknown): string {
@@ -47,8 +47,6 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     res = await fetch(API_BASE + path, {
       credentials: API_BASE ? "include" : "same-origin",
-      // Access answers an expired session with a cross-origin redirect to the login page.
-      redirect: "manual",
       ...init,
       headers: {
         accept: "application/json",
@@ -58,9 +56,6 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
   } catch {
     throw new ApiError(0, "network", MESSAGES.network);
-  }
-  if (res.type === "opaqueredirect") {
-    throw new ApiError(401, "session_expired", MESSAGES.session_expired);
   }
   if (!res.ok) {
     let code = `http_${res.status}`;
@@ -79,4 +74,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, code, message, requestId);
   }
   return res.json() as Promise<T>;
+}
+
+/** Exchanges the owner password for an HttpOnly session cookie (set by the server, never readable here). */
+export function login(password: string): Promise<{ ok: true; expires_at: string }> {
+  return api("/api/login", { method: "POST", body: JSON.stringify({ password }) });
+}
+
+/** Clears the session cookie. */
+export function logout(): Promise<{ ok: true }> {
+  return api("/api/logout", { method: "POST", body: "{}" });
 }

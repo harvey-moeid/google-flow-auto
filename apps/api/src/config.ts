@@ -1,23 +1,22 @@
 import type { Env } from "./types.ts";
 
-const TEAM_DOMAIN_RE = /^[a-z0-9][a-z0-9-]*\.cloudflareaccess\.com$/;
-const AUD_RE = /^[a-f0-9]{64}$/;
 export const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,63}$/;
-/** Access service-token Client ID as it appears in the JWT `common_name` claim. Case-sensitive. */
-export const SERVICE_ID_RE = /^[A-Za-z0-9._-]{8,128}$/;
+export const MIN_PASSWORD_LENGTH = 10;
+export const MIN_SECRET_LENGTH = 32;
+const MAX_SECRET_LENGTH = 256;
+/** Characters allowed in the worker bearer token (it travels in an HTTP header). */
+const TOKEN_CHARS_RE = /^[A-Za-z0-9._~+/=-]+$/;
+const PLACEHOLDER_RE = /^REPLACE_WITH/i;
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export interface AppConfig {
   isDevelopment: boolean;
-  teamDomain: string;
-  aud: string;
-  allowedEmails: Set<string>;
-  /** Service-token Client IDs allowed on /api/worker/*. Empty = worker API disabled. */
-  allowedServiceTokens: Set<string>;
+  ownerPassword: string;
+  sessionSecret: string;
+  /** Null = worker API disabled. */
+  workerToken: string | null;
   allowedOrigins: Set<string>;
   liveEnginesEnabled: boolean;
-  /** Only ever non-null when APP_ENV is exactly "development". */
-  devAuthEmail: string | null;
 }
 
 export type ConfigResult =
@@ -33,6 +32,11 @@ function splitList(value: string | undefined): string[] {
     .split(/[\s,]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+/** Secrets set from a shell pipe often carry a trailing newline; nothing else is altered. */
+function cleanSecret(value: string | undefined): string {
+  return (value ?? "").replace(/[\r\n]+$/, "");
 }
 
 function isAllowedOriginSyntax(value: string): boolean {
@@ -57,32 +61,37 @@ export function loadConfig(env: Env): ConfigResult {
   const problems: string[] = [];
   const isDevelopment = env.APP_ENV === "development";
 
-  const devAuthEmail =
-    isDevelopment && env.DEV_AUTH_EMAIL ? env.DEV_AUTH_EMAIL.trim().toLowerCase() : null;
-  if (devAuthEmail && !EMAIL_RE.test(devAuthEmail)) problems.push("DEV_AUTH_EMAIL");
-
-  const accessRequired = devAuthEmail === null;
-  const teamDomain = (env.CF_ACCESS_TEAM_DOMAIN ?? "").trim();
-  const aud = (env.CF_ACCESS_AUD ?? "").trim();
-  if (accessRequired || teamDomain) {
-    if (!TEAM_DOMAIN_RE.test(teamDomain)) problems.push("CF_ACCESS_TEAM_DOMAIN");
-  }
-  if (accessRequired || aud) {
-    if (!AUD_RE.test(aud)) problems.push("CF_ACCESS_AUD");
+  const ownerPassword = cleanSecret(env.OWNER_PASSWORD);
+  if (
+    ownerPassword.length < MIN_PASSWORD_LENGTH ||
+    ownerPassword.length > MAX_SECRET_LENGTH ||
+    PLACEHOLDER_RE.test(ownerPassword)
+  ) {
+    problems.push("OWNER_PASSWORD");
   }
 
-  const allowedEmails = new Set<string>();
-  const emails = splitList(env.ALLOWED_EMAILS).map((e) => e.toLowerCase());
-  for (const email of emails) {
-    if (EMAIL_RE.test(email)) allowedEmails.add(email);
-    else problems.push("ALLOWED_EMAILS");
+  const sessionSecret = cleanSecret(env.SESSION_SECRET);
+  if (
+    sessionSecret.length < MIN_SECRET_LENGTH ||
+    sessionSecret.length > MAX_SECRET_LENGTH ||
+    PLACEHOLDER_RE.test(sessionSecret)
+  ) {
+    problems.push("SESSION_SECRET");
   }
-  if (accessRequired && allowedEmails.size === 0) problems.push("ALLOWED_EMAILS");
 
-  const allowedServiceTokens = new Set<string>();
-  for (const clientId of splitList(env.ALLOWED_SERVICE_TOKENS)) {
-    if (SERVICE_ID_RE.test(clientId)) allowedServiceTokens.add(clientId);
-    else problems.push("ALLOWED_SERVICE_TOKENS");
+  let workerToken: string | null = null;
+  const rawWorkerToken = cleanSecret(env.WORKER_TOKEN);
+  if (rawWorkerToken) {
+    if (
+      rawWorkerToken.length >= MIN_SECRET_LENGTH &&
+      rawWorkerToken.length <= MAX_SECRET_LENGTH &&
+      TOKEN_CHARS_RE.test(rawWorkerToken) &&
+      !PLACEHOLDER_RE.test(rawWorkerToken)
+    ) {
+      workerToken = rawWorkerToken;
+    } else {
+      problems.push("WORKER_TOKEN");
+    }
   }
 
   const allowedOrigins = new Set<string>();
@@ -94,8 +103,9 @@ export function loadConfig(env: Env): ConfigResult {
   if (!isDevelopment) {
     if (!env.RL_READ) problems.push("RL_READ binding");
     if (!env.RL_WRITE) problems.push("RL_WRITE binding");
-    // The worker API is only reachable when service tokens are configured; then it must be rate limited.
-    if (allowedServiceTokens.size > 0 && !env.RL_WORKER) problems.push("RL_WORKER binding");
+    if (!env.RL_LOGIN) problems.push("RL_LOGIN binding");
+    // The worker API is only reachable when a worker token is configured; then it must be rate limited.
+    if (workerToken !== null && !env.RL_WORKER) problems.push("RL_WORKER binding");
   }
 
   if (problems.length > 0) return { ok: false, problems: [...new Set(problems)] };
@@ -103,13 +113,11 @@ export function loadConfig(env: Env): ConfigResult {
     ok: true,
     config: {
       isDevelopment,
-      teamDomain,
-      aud,
-      allowedEmails,
-      allowedServiceTokens,
+      ownerPassword,
+      sessionSecret,
+      workerToken,
       allowedOrigins,
       liveEnginesEnabled: env.LIVE_ENGINES_ENABLED === "true",
-      devAuthEmail,
     },
   };
 }

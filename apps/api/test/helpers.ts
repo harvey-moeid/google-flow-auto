@@ -1,12 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { SESSION_COOKIE, createSessionToken } from "../src/auth.ts";
 import { createApp } from "../src/index.ts";
 
-export const TEAM = "testteam.cloudflareaccess.com";
-export const AUD = "ab".repeat(32);
-export const OWNER = "owner@example.com";
-export const SERVICE = "0123456789abcdef0123456789abcdef.access";
+export const OWNER_PASSWORD = "correct-horse-battery-staple";
+export const SESSION_SECRET = "test-session-secret-0123456789abcdef-0123456789";
+export const WORKER_TOKEN = "test-worker-token-0123456789abcdef0123456789abcdef";
 export const BASE = "https://api.example.test";
 const MIGRATIONS_DIR = fileURLToPath(new URL("../../../cloudflare/migrations/", import.meta.url));
 
@@ -68,95 +68,58 @@ export function count(db: TestDb, table: string): number {
   return Number((db.raw.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c);
 }
 
-// ---------- JWT / JWKS ----------
-
-export interface Signer {
-  kid: string;
-  privateKey: CryptoKey;
-  publicJwk: JsonWebKey & { kid: string; alg: string; use: string };
-}
-
-export async function createSigner(kid: string): Promise<Signer> {
-  const pair = (await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  return { kid, privateKey: pair.privateKey, publicJwk: { ...jwk, kid, alg: "RS256", use: "sig" } };
-}
-
-const b64url = (value: string | Uint8Array) => Buffer.from(value).toString("base64url");
-
-export async function signJwt(
-  signer: Signer,
-  claims: Record<string, unknown>,
-  header: Record<string, unknown> = {},
-): Promise<string> {
-  const head = b64url(JSON.stringify({ alg: "RS256", kid: signer.kid, typ: "JWT", ...header }));
-  const body = b64url(JSON.stringify(claims));
-  const signature = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    signer.privateKey,
-    new TextEncoder().encode(`${head}.${body}`),
-  );
-  return `${head}.${body}.${b64url(new Uint8Array(signature))}`;
-}
-
 // ---------- harness ----------
+
+type Bucket = "read" | "write" | "worker" | "login";
 
 export interface Harness {
   app: ReturnType<typeof createApp>;
   env: Record<string, unknown>;
   db: TestDb;
-  signer: Signer;
   clock: { now: number };
-  jwks: { keys: Signer[]; fail: boolean; calls: number };
   limiter: {
     read: string[];
     write: string[];
     worker: string[];
+    login: string[];
     allowRead: boolean;
     allowWrite: boolean;
     allowWorker: boolean;
+    allowLogin: boolean;
     throws: boolean;
   };
-  claims: (overrides?: Record<string, unknown>) => Record<string, unknown>;
-  token: (overrides?: Record<string, unknown>) => Promise<string>;
-  /** Access service token (no email, Client ID in `common_name`). */
-  serviceToken: (overrides?: Record<string, unknown>) => Promise<string>;
+  /** A valid owner session token for the harness clock (or a custom issue time / lifetime). */
+  session: (options?: { nowMs?: number; ttlSeconds?: number; secret?: string }) => Promise<string>;
 }
 
 export async function createHarness(envOverrides: Record<string, unknown> = {}): Promise<Harness> {
   const db = createD1();
-  const signer = await createSigner("kid-1");
   const clock = { now: Date.parse("2026-11-14T00:00:00Z") };
-  const jwks = { keys: [signer], fail: false, calls: 0 };
   const limiter = {
     read: [] as string[],
     write: [] as string[],
     worker: [] as string[],
+    login: [] as string[],
     allowRead: true,
     allowWrite: true,
     allowWorker: true,
+    allowLogin: true,
     throws: false,
   };
 
-  const app = createApp({
-    now: () => clock.now,
-    fetch: async (input: string) => {
-      jwks.calls += 1;
-      if (jwks.fail || input !== `https://${TEAM}/cdn-cgi/access/certs`) return new Response("nope", { status: 500 });
-      return new Response(JSON.stringify({ keys: jwks.keys.map((key) => key.publicJwk) }), { status: 200 });
-    },
-  });
+  const app = createApp({ now: () => clock.now });
 
-  const makeLimiter = (bucket: "read" | "write" | "worker") => ({
+  const allowFlag = {
+    read: "allowRead",
+    write: "allowWrite",
+    worker: "allowWorker",
+    login: "allowLogin",
+  } as const;
+  const makeLimiter = (bucket: Bucket) => ({
     async limit({ key }: { key: string }) {
       limiter[bucket].push(key);
       if (limiter.throws) throw new Error("limiter down");
-      const allow = bucket === "read" ? limiter.allowRead : bucket === "write" ? limiter.allowWrite : limiter.allowWorker;
-      return { success: allow };
+      return { success: limiter[allowFlag[bucket]] };
     },
   });
 
@@ -164,45 +127,35 @@ export async function createHarness(envOverrides: Record<string, unknown> = {}):
     DB: db,
     MEDIA: {},
     APP_ENV: "production",
-    CF_ACCESS_TEAM_DOMAIN: TEAM,
-    CF_ACCESS_AUD: AUD,
-    ALLOWED_EMAILS: OWNER,
-    ALLOWED_SERVICE_TOKENS: SERVICE,
+    OWNER_PASSWORD,
+    SESSION_SECRET,
+    WORKER_TOKEN,
     LIVE_ENGINES_ENABLED: "false",
     RL_READ: makeLimiter("read"),
     RL_WRITE: makeLimiter("write"),
     RL_WORKER: makeLimiter("worker"),
+    RL_LOGIN: makeLimiter("login"),
     ...envOverrides,
   };
 
-  const base = () => {
-    const nowSeconds = Math.floor(clock.now / 1000);
-    return { iss: `https://${TEAM}`, aud: [AUD], exp: nowSeconds + 3600, iat: nowSeconds };
-  };
-  const claims = (overrides: Record<string, unknown> = {}) => ({ ...base(), email: OWNER, ...overrides });
-  const serviceClaims = (overrides: Record<string, unknown> = {}) => ({
-    ...base(),
-    common_name: SERVICE,
-    ...overrides,
-  });
   return {
     app,
     env,
     db,
-    signer,
     clock,
-    jwks,
     limiter,
-    claims,
-    token: async (overrides) => signJwt(signer, claims(overrides)),
-    serviceToken: async (overrides) => signJwt(signer, serviceClaims(overrides)),
+    session: async (options = {}) =>
+      (await createSessionToken(options.secret ?? SESSION_SECRET, options.nowMs ?? clock.now, options.ttlSeconds)).token,
   };
 }
 
 export interface CallOptions {
   method?: string;
   path: string;
-  token?: string | null;
+  /** Raw session token placed in the `__Host-gfa_session` cookie. */
+  session?: string | null;
+  /** Value after "Bearer " in the Authorization header. */
+  bearer?: string | null;
   body?: unknown;
   rawBody?: string;
   headers?: Record<string, string>;
@@ -217,16 +170,21 @@ export interface CallResult {
   text: string;
 }
 
-export async function call(h: Harness, options: CallOptions): Promise<CallResult> {
-  const method = options.method ?? "GET";
+export function buildRequest(options: CallOptions, body?: BodyInit | null): Request {
   const headers = new Headers(options.headers ?? {});
-  if (options.token) headers.set("cf-access-jwt-assertion", options.token);
+  if (options.session) headers.set("cookie", `${SESSION_COOKIE}=${options.session}`);
+  if (options.bearer) headers.set("authorization", `Bearer ${options.bearer}`);
   if (options.origin) headers.set("origin", options.origin);
-  let body: string | undefined;
-  if (options.rawBody !== undefined) body = options.rawBody;
-  else if (options.body !== undefined) body = JSON.stringify(options.body);
-  if (body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const request = new Request(`${options.base ?? BASE}${options.path}`, { method, headers, body });
+  const init: RequestInit & { duplex?: "half" } = { method: options.method ?? "GET", headers };
+  if (body !== undefined && body !== null) {
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+    init.body = body;
+    if (typeof body !== "string") init.duplex = "half";
+  }
+  return new Request(`${options.base ?? BASE}${options.path}`, init);
+}
+
+export async function send(h: Harness, request: Request): Promise<CallResult> {
   const response = await h.app.fetch(request, h.env as never);
   const text = await response.text();
   let json: any = null;
@@ -238,14 +196,21 @@ export async function call(h: Harness, options: CallOptions): Promise<CallResult
   return { status: response.status, headers: response.headers, json, text };
 }
 
-/** Authenticated call as the owner. */
-export async function authed(h: Harness, options: CallOptions): Promise<CallResult> {
-  return call(h, { ...options, token: await h.token() });
+export async function call(h: Harness, options: CallOptions): Promise<CallResult> {
+  let body: string | undefined;
+  if (options.rawBody !== undefined) body = options.rawBody;
+  else if (options.body !== undefined) body = JSON.stringify(options.body);
+  return send(h, buildRequest(options, body));
 }
 
-/** Authenticated call as the browser worker (Access service token). */
+/** Authenticated call as the owner (valid session cookie). */
+export async function authed(h: Harness, options: CallOptions): Promise<CallResult> {
+  return call(h, { ...options, session: await h.session() });
+}
+
+/** Authenticated call as the browser worker (bearer WORKER_TOKEN). */
 export async function asWorker(h: Harness, options: CallOptions): Promise<CallResult> {
-  return call(h, { method: "POST", ...options, token: await h.serviceToken() });
+  return call(h, { method: "POST", ...options, bearer: WORKER_TOKEN });
 }
 
 export function makeAccountReady(h: Harness, id = "acct-01") {
