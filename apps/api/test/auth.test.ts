@@ -14,6 +14,7 @@ import {
 } from "./helpers.ts";
 
 const UUID = "11111111-2222-4333-8444-555555555555";
+const WORKER_BODY = { worker_id: "worker-1", fencing_token: 1 };
 
 /** One concrete request per route. The coverage test below fails if a route is added without a sample. */
 const SAMPLES: Array<{ method: string; path: string; body?: unknown }> = [
@@ -29,7 +30,20 @@ const SAMPLES: Array<{ method: string; path: string; body?: unknown }> = [
     body: { project_id: UUID, account_id: "acct-01", idempotency_key: "hack-attempt-0001" },
   },
   { method: "POST", path: `/api/jobs/${UUID}/cancel` },
+  { method: "POST", path: `/api/jobs/${UUID}/resume` },
   { method: "GET", path: "/api/audit" },
+  // Worker (service token) routes.
+  { method: "POST", path: "/api/worker/claim", body: { worker_id: "worker-1" } },
+  { method: "POST", path: `/api/worker/jobs/${UUID}/start`, body: WORKER_BODY },
+  { method: "POST", path: `/api/worker/jobs/${UUID}/heartbeat`, body: WORKER_BODY },
+  { method: "POST", path: `/api/worker/jobs/${UUID}/complete`, body: WORKER_BODY },
+  {
+    method: "POST",
+    path: `/api/worker/jobs/${UUID}/fail`,
+    body: { ...WORKER_BODY, error_code: "boom", retryable: false },
+  },
+  { method: "POST", path: `/api/worker/jobs/${UUID}/wait`, body: WORKER_BODY },
+  { method: "POST", path: `/api/worker/jobs/${UUID}/cancel-ack`, body: WORKER_BODY },
 ];
 
 test("every route has an auth sample (new routes must be added to SAMPLES)", () => {
