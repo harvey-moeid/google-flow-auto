@@ -114,7 +114,7 @@ Exit: security review has no unresolved critical/high findings; staging E2E, res
 
 ## Final acceptance checklist
 - [ ] PWA installs and normal control works from Android.
-- [ ] Production identity/auth works; no privileged secret in frontend.
+- [ ] Production identity/auth works; no privileged secret in frontend. (Implemented and CI-tested in Phase 1, PR #4; not yet verified against a real Cloudflare Access staging deployment.)
 - [ ] Ten account slots are manageable; manual enrollment and manual selection.
 - [ ] Ten isolated persistent profiles, safely stored and recoverable.
 - [ ] One global sequential lane survives worker restarts.

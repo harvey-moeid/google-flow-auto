@@ -34,11 +34,10 @@ This is a scaffold, not a final or production-ready implementation. The plan fil
 10. Remote manual enrollment, persistent worker host operations, backup and restore are incomplete.
 11. Production Cloudflare IDs/secrets/auth are not configured.
 
-## Immediate next task: Phase 0
-- Trigger/run the existing CI workflows.
-- Fix actual TypeScript/PWA and Python package/import failures.
-- Add deterministic lockfiles.
-- Add tests for slot validation, profile isolation, sequential serialization and dry-run.
+## Immediate next task: Phase 2 (Phase 1 done pending merge of PR #4)
+- Versioned D1 migrations replacing bootstrap-only schema evolution.
+- Atomic job claim, global lease with expiry/heartbeat/fencing token, stale-worker recovery, bounded retries, safe cancellation.
+- Worker-facing endpoints must use a Cloudflare Access **service token** with its own narrow authorization (the shared bearer token is gone).
 - Keep live adapters disabled.
 - Commit small, reviewable changes and report exact workflow run and test outcomes.
 
@@ -83,3 +82,16 @@ At the end of each work session update:
 - Security review: `.worker-data/`, `.dev.vars`, `.wrangler/` are now gitignored; no credentials or profile data tracked. Still open: `VITE_API_TOKEN` is baked into the PWA bundle, CORS reflects the request origin, no real auth (all Phase 1).
 - Blockers and decisions: `workers-types` moved to major 5 (latest on npm); `tsc --noEmit` passes on the current API code. Live adapters remain disabled.
 - Next concrete task: Phase 1 — Cloudflare Access/OIDC identity, remove `VITE_API_TOKEN`, strict CORS allowlist, input validation, rate limits.
+
+### Session 2 — Phase 1 (secure API and identity)
+- Current phase: Phase 1 implemented, CI green; pending merge of PR #4. Next is Phase 2.
+- Branch / PR / commits: `feat/phase-1-secure-api`, PR #4; `4d013dd` (API), `0e90b3b` (PWA), `f66ddff` (CI/scanner), `7b3a7c1` (docs), `13bf322` (fix `ignoreBOM` for real workers-types).
+- Design: Cloudflare Access is the identity provider. The Worker verifies `Cf-Access-Jwt-Assertion` itself (RS256, team JWKS cached 1h, refetch on unknown `kid` at most once/min, 24h stale tolerance; checks `iss`, `aud`, `exp`, `nbf`, `kid`) then requires the `email` claim in `ALLOWED_EMAILS` (a secret). Only `/health` is public. Config fails closed (503) on missing or `REPLACE_WITH_*` values. `workers_dev`/`preview_urls` disabled. Recommended topology: PWA and `/api/*` on one hostname (same-origin).
+- Also done: strict origin allowlist and CSRF Origin check on writes, security headers, `x-request-id`, 16 KiB body and JSON content-type limits, per-identity read/write rate limits (Workers binding), hand-written validation (unknown fields rejected), keyset pagination, stable error codes `{error:{code,message,request_id,details?}}`, atomic audit events for every mutation plus `GET /api/audit`, live engines refused unless `LIVE_ENGINES_ENABLED=true`, account status not writable via API, idempotency keys replay or conflict.
+- Frontend: `VITE_API_TOKEN` and Authorization header removed; new `apps/pwa/src/api.ts`; `_headers` with CSP; `scripts/check-bundle-secrets.mjs` scans built assets and wiring (never prints values); only `VITE_API_URL` is allowlisted.
+- API contract changes: list endpoints return `{items,next_cursor}`; `GET /api/me`, `GET /api/audit`, `POST /api/jobs/:id/cancel` added; `error_message` is no longer exposed by `GET /api/jobs`.
+- Tests run and exact results: GitHub Actions `Test` run 43562864947 on `13bf322` = success (typecheck with real workers-types, API tests, script tests, PWA build, secret scan, python-check). Run 43562775248 on `7b3a7c1` failed only on `TextDecoder` `ignoreBOM` typing; fixed in `13bf322`. Local: 56 API tests, 8 scanner tests pass. 15 manual mutations of the security controls (skip aud/iss/signature/alg/exp/allowlist/origin/rate-limit checks, CORS wildcard, etc.) were all caught by tests. API tests use real RSA-signed JWTs and SQLite loaded from `cloudflare/schema.sql` as a D1 stand-in, so D1-specific behaviour (batch atomicity semantics, `meta.changes`) is simulated, not proven.
+- Deployment/staging status: none. The Access application, Worker route, rate-limit bindings (`namespace_id` 7101/7102 must be unique in the account), Pages and `*.pages.dev` protection have not been exercised on a real Cloudflare account. Checklist in `docs/DEPLOY_ANDROID.md`.
+- Security review: no secrets in git or bundle (scanner). Known gaps: Workers rate limiting is approximate/per-location; engine worker does not call the API yet; the PWA has no UI for audit/cancel; R2 is still unused.
+- Blockers and decisions: owner must create the Access app and fill `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, route, and `wrangler secret put ALLOWED_EMAILS` before any deploy. Local `engine` pytest shows 12 async failures only when `pytest-asyncio` is missing; identical on `main`, green in CI.
+- Next concrete task: Phase 2 — versioned D1 migrations, atomic claim and global lease with fencing, service-token auth for the worker.
