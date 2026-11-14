@@ -19,14 +19,14 @@ export interface Route {
   pattern: RegExp;
   /** Mutating routes get Origin enforcement and the stricter write rate limit. */
   write: boolean;
-  /** owner = human via Access identity; worker = Access service token. Never both. */
+  /** owner = human with a password session; worker = bearer WORKER_TOKEN. Never both. */
   audience: "owner" | "worker";
   handler: (ctx: Ctx) => Promise<Response>;
 }
 
-/** Stable audit/rate-limit label for the caller. */
+/** Stable audit label for the caller. */
 export function actorOf(identity: Identity): string {
-  return identity.kind === "owner" ? identity.email : `service:${identity.clientId}`;
+  return identity.kind === "owner" ? identity.name : "worker";
 }
 
 export function auditStatement(
