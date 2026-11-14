@@ -12,10 +12,17 @@ preview_urls = false
 # Uncomment and set your zone/hostname after creating the Access application:
 # routes = [{ pattern = "app.example.com/api/*", zone_name = "example.com" }]
 
+# Stale-lease recovery runs every minute even when no worker is polling, so a crashed worker's
+# job is requeued (or failed after the retry limit) without waiting for the next claim.
+[triggers]
+crons = ["* * * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "google-flow-auto"
 database_id = "REPLACE_WITH_D1_DATABASE_ID"
+# Versioned migrations (Phase 2): `npx wrangler d1 migrations apply google-flow-auto --remote`
+migrations_dir = "../../cloudflare/migrations"
 
 [[r2_buckets]]
 binding = "MEDIA"
@@ -39,6 +46,15 @@ namespace_id = "7102"
   limit = 20
   period = 60
 
+# Worker (service token) endpoints poll and heartbeat, so they get their own, larger bucket.
+[[ratelimits]]
+name = "RL_WORKER"
+namespace_id = "7103"
+
+  [ratelimits.simple]
+  limit = 120
+  period = 60
+
 [vars]
 APP_ENV = "production"
 # From Zero Trust > Settings > Custom pages / team domain, e.g. myteam.cloudflareaccess.com
@@ -46,7 +62,11 @@ CF_ACCESS_TEAM_DOMAIN = "REPLACE_WITH_TEAM.cloudflareaccess.com"
 # Application Audience (AUD) tag of the Access application (64 hex characters).
 CF_ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
 # Live (non dry-run) engines stay disabled until Phase 5 qualifies an adapter.
+# This is also the live kill switch: while "false" the queue only hands out dry-run jobs.
 LIVE_ENGINES_ENABLED = "false"
 # Set ALLOWED_EMAILS as a secret so owner emails never enter git:
 #   npx wrangler secret put ALLOWED_EMAILS      (comma separated, e.g. owner@example.com)
+# Worker endpoints (/api/worker/*) accept ONLY Access service tokens. List the allowed service token
+# Client IDs (the "common_name" claim, e.g. abc123.access) as a secret; empty/unset = worker API disabled:
+#   npx wrangler secret put ALLOWED_SERVICE_TOKENS
 # Optional ALLOWED_ORIGINS (extra exact origins) can also be set with `wrangler secret put`.

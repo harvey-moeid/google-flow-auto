@@ -3,6 +3,8 @@ import type { Env } from "./types.ts";
 const TEAM_DOMAIN_RE = /^[a-z0-9][a-z0-9-]*\.cloudflareaccess\.com$/;
 const AUD_RE = /^[a-f0-9]{64}$/;
 export const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,63}$/;
+/** Access service-token Client ID as it appears in the JWT `common_name` claim. Case-sensitive. */
+export const SERVICE_ID_RE = /^[A-Za-z0-9._-]{8,128}$/;
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export interface AppConfig {
@@ -10,6 +12,8 @@ export interface AppConfig {
   teamDomain: string;
   aud: string;
   allowedEmails: Set<string>;
+  /** Service-token Client IDs allowed on /api/worker/*. Empty = worker API disabled. */
+  allowedServiceTokens: Set<string>;
   allowedOrigins: Set<string>;
   liveEnginesEnabled: boolean;
   /** Only ever non-null when APP_ENV is exactly "development". */
@@ -75,6 +79,12 @@ export function loadConfig(env: Env): ConfigResult {
   }
   if (accessRequired && allowedEmails.size === 0) problems.push("ALLOWED_EMAILS");
 
+  const allowedServiceTokens = new Set<string>();
+  for (const clientId of splitList(env.ALLOWED_SERVICE_TOKENS)) {
+    if (SERVICE_ID_RE.test(clientId)) allowedServiceTokens.add(clientId);
+    else problems.push("ALLOWED_SERVICE_TOKENS");
+  }
+
   const allowedOrigins = new Set<string>();
   for (const origin of splitList(env.ALLOWED_ORIGINS)) {
     if (isAllowedOriginSyntax(origin)) allowedOrigins.add(origin);
@@ -84,6 +94,8 @@ export function loadConfig(env: Env): ConfigResult {
   if (!isDevelopment) {
     if (!env.RL_READ) problems.push("RL_READ binding");
     if (!env.RL_WRITE) problems.push("RL_WRITE binding");
+    // The worker API is only reachable when service tokens are configured; then it must be rate limited.
+    if (allowedServiceTokens.size > 0 && !env.RL_WORKER) problems.push("RL_WORKER binding");
   }
 
   if (problems.length > 0) return { ok: false, problems: [...new Set(problems)] };
@@ -94,6 +106,7 @@ export function loadConfig(env: Env): ConfigResult {
       teamDomain,
       aud,
       allowedEmails,
+      allowedServiceTokens,
       allowedOrigins,
       liveEnginesEnabled: env.LIVE_ENGINES_ENABLED === "true",
       devAuthEmail,
