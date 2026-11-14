@@ -1,3 +1,4 @@
+import { SERVICE_ID_RE } from "./config.ts";
 import { b64urlToBytes } from "./encoding.ts";
 import type { Deps } from "./types.ts";
 
@@ -19,7 +20,14 @@ export type VerifyFailure =
   | "missing_email"
   | "jwks_unavailable";
 
-export type VerifyResult = { ok: true; email: string } | { ok: false; reason: VerifyFailure };
+/**
+ * A verified token is either a human (has an `email` claim) or an Access service token
+ * (no email; the Client ID is in `common_name`). Callers decide what each kind may do.
+ */
+export type VerifyResult =
+  | { ok: true; kind: "owner"; email: string }
+  | { ok: true; kind: "service"; clientId: string }
+  | { ok: false; reason: VerifyFailure };
 
 interface Jwk {
   kty?: unknown;
@@ -157,10 +165,19 @@ export function createAccessVerifier(deps: Deps) {
     if (typeof claims.nbf === "number" && claims.nbf - CLOCK_LEEWAY_S > nowSeconds) {
       return { ok: false, reason: "not_yet_valid" };
     }
-    if (typeof claims.email !== "string" || !claims.email.includes("@")) {
-      return { ok: false, reason: "missing_email" };
+    // A human identity token carries an email. If an email claim is present at all it decides
+    // the kind (a malformed email is rejected, never reinterpreted as a service token).
+    if (claims.email !== undefined) {
+      if (typeof claims.email !== "string" || !claims.email.includes("@")) {
+        return { ok: false, reason: "missing_email" };
+      }
+      return { ok: true, kind: "owner", email: claims.email.trim().toLowerCase() };
     }
-    return { ok: true, email: claims.email.trim().toLowerCase() };
+    // Access service tokens have no email; the token's Client ID is the `common_name` claim.
+    if (typeof claims.common_name === "string" && SERVICE_ID_RE.test(claims.common_name)) {
+      return { ok: true, kind: "service", clientId: claims.common_name };
+    }
+    return { ok: false, reason: "missing_email" };
   }
 
   return { verify };

@@ -1,18 +1,28 @@
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createApp } from "../src/index.ts";
 
 export const TEAM = "testteam.cloudflareaccess.com";
 export const AUD = "ab".repeat(32);
 export const OWNER = "owner@example.com";
+export const SERVICE = "0123456789abcdef0123456789abcdef.access";
 export const BASE = "https://api.example.test";
-const SCHEMA_PATH = fileURLToPath(new URL("../../../cloudflare/schema.sql", import.meta.url));
+const MIGRATIONS_DIR = fileURLToPath(new URL("../../../cloudflare/migrations/", import.meta.url));
 
-/** A D1-shaped wrapper over an in-memory SQLite loaded with the real schema.sql. */
+/** Applies the real versioned migrations in order, exactly like `wrangler d1 migrations apply`. */
+export function applyMigrations(db: DatabaseSync): string[] {
+  const files = readdirSync(MIGRATIONS_DIR)
+    .filter((name) => /^\d{4}_.+\.sql$/.test(name))
+    .sort();
+  for (const name of files) db.exec(readFileSync(`${MIGRATIONS_DIR}${name}`, "utf8"));
+  return files;
+}
+
+/** A D1-shaped wrapper over an in-memory SQLite with the real migrations applied. */
 export function createD1() {
   const db = new DatabaseSync(":memory:");
-  db.exec(readFileSync(SCHEMA_PATH, "utf8"));
+  applyMigrations(db);
   const statement = (sql: string, args: unknown[] = []) => ({
     bind: (...next: unknown[]) => statement(sql, next),
     async run() {
@@ -26,20 +36,28 @@ export function createD1() {
       return { success: true, results: db.prepare(sql).all(...(args as never[])) };
     },
   });
+  // D1 runs batches one at a time, each as a single transaction. A single in-memory connection
+  // would interleave concurrent batches at `await` points, so they are serialised here.
+  let queue: Promise<unknown> = Promise.resolve();
+  const runBatch = async (statements: Array<{ run: () => Promise<unknown> }>) => {
+    db.exec("BEGIN");
+    try {
+      const out = [];
+      for (const item of statements) out.push(await item.run());
+      db.exec("COMMIT");
+      return out;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  };
   return {
     raw: db,
     prepare: (sql: string) => statement(sql),
-    async batch(statements: Array<{ run: () => Promise<unknown> }>) {
-      db.exec("BEGIN");
-      try {
-        const out = [];
-        for (const item of statements) out.push(await item.run());
-        db.exec("COMMIT");
-        return out;
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
+    batch(statements: Array<{ run: () => Promise<unknown> }>) {
+      const result = queue.then(() => runBatch(statements));
+      queue = result.catch(() => undefined);
+      return result;
     },
   };
 }
@@ -94,9 +112,19 @@ export interface Harness {
   signer: Signer;
   clock: { now: number };
   jwks: { keys: Signer[]; fail: boolean; calls: number };
-  limiter: { read: string[]; write: string[]; allowRead: boolean; allowWrite: boolean; throws: boolean };
+  limiter: {
+    read: string[];
+    write: string[];
+    worker: string[];
+    allowRead: boolean;
+    allowWrite: boolean;
+    allowWorker: boolean;
+    throws: boolean;
+  };
   claims: (overrides?: Record<string, unknown>) => Record<string, unknown>;
   token: (overrides?: Record<string, unknown>) => Promise<string>;
+  /** Access service token (no email, Client ID in `common_name`). */
+  serviceToken: (overrides?: Record<string, unknown>) => Promise<string>;
 }
 
 export async function createHarness(envOverrides: Record<string, unknown> = {}): Promise<Harness> {
@@ -104,7 +132,15 @@ export async function createHarness(envOverrides: Record<string, unknown> = {}):
   const signer = await createSigner("kid-1");
   const clock = { now: Date.parse("2026-11-14T00:00:00Z") };
   const jwks = { keys: [signer], fail: false, calls: 0 };
-  const limiter = { read: [] as string[], write: [] as string[], allowRead: true, allowWrite: true, throws: false };
+  const limiter = {
+    read: [] as string[],
+    write: [] as string[],
+    worker: [] as string[],
+    allowRead: true,
+    allowWrite: true,
+    allowWorker: true,
+    throws: false,
+  };
 
   const app = createApp({
     now: () => clock.now,
@@ -115,11 +151,12 @@ export async function createHarness(envOverrides: Record<string, unknown> = {}):
     },
   });
 
-  const makeLimiter = (bucket: "read" | "write") => ({
+  const makeLimiter = (bucket: "read" | "write" | "worker") => ({
     async limit({ key }: { key: string }) {
       limiter[bucket].push(key);
       if (limiter.throws) throw new Error("limiter down");
-      return { success: bucket === "read" ? limiter.allowRead : limiter.allowWrite };
+      const allow = bucket === "read" ? limiter.allowRead : bucket === "write" ? limiter.allowWrite : limiter.allowWorker;
+      return { success: allow };
     },
   });
 
@@ -130,24 +167,36 @@ export async function createHarness(envOverrides: Record<string, unknown> = {}):
     CF_ACCESS_TEAM_DOMAIN: TEAM,
     CF_ACCESS_AUD: AUD,
     ALLOWED_EMAILS: OWNER,
+    ALLOWED_SERVICE_TOKENS: SERVICE,
     LIVE_ENGINES_ENABLED: "false",
     RL_READ: makeLimiter("read"),
     RL_WRITE: makeLimiter("write"),
+    RL_WORKER: makeLimiter("worker"),
     ...envOverrides,
   };
 
-  const claims = (overrides: Record<string, unknown> = {}) => {
+  const base = () => {
     const nowSeconds = Math.floor(clock.now / 1000);
-    return {
-      iss: `https://${TEAM}`,
-      aud: [AUD],
-      exp: nowSeconds + 3600,
-      iat: nowSeconds,
-      email: OWNER,
-      ...overrides,
-    };
+    return { iss: `https://${TEAM}`, aud: [AUD], exp: nowSeconds + 3600, iat: nowSeconds };
   };
-  return { app, env, db, signer, clock, jwks, limiter, claims, token: async (overrides) => signJwt(signer, claims(overrides)) };
+  const claims = (overrides: Record<string, unknown> = {}) => ({ ...base(), email: OWNER, ...overrides });
+  const serviceClaims = (overrides: Record<string, unknown> = {}) => ({
+    ...base(),
+    common_name: SERVICE,
+    ...overrides,
+  });
+  return {
+    app,
+    env,
+    db,
+    signer,
+    clock,
+    jwks,
+    limiter,
+    claims,
+    token: async (overrides) => signJwt(signer, claims(overrides)),
+    serviceToken: async (overrides) => signJwt(signer, serviceClaims(overrides)),
+  };
 }
 
 export interface CallOptions {
@@ -192,6 +241,11 @@ export async function call(h: Harness, options: CallOptions): Promise<CallResult
 /** Authenticated call as the owner. */
 export async function authed(h: Harness, options: CallOptions): Promise<CallResult> {
   return call(h, { ...options, token: await h.token() });
+}
+
+/** Authenticated call as the browser worker (Access service token). */
+export async function asWorker(h: Harness, options: CallOptions): Promise<CallResult> {
+  return call(h, { method: "POST", ...options, token: await h.serviceToken() });
 }
 
 export function makeAccountReady(h: Harness, id = "acct-01") {
