@@ -1,7 +1,9 @@
-import type { AppConfig } from "./config.ts";
 import { asciiToB64url, b64urlToBytes } from "./encoding.ts";
 import { HttpError, jsonResponse, readJsonObject } from "./http.ts";
-import type { Env, Identity } from "./types.ts";
+import { ACTIVE_STATUSES } from "./queue.ts";
+import { auditIfChanged, auditStatement } from "./route-types.ts";
+import type { Ctx, Route } from "./route-types.ts";
+import { workerRoutes } from "./worker-routes.ts";
 import {
   ACCOUNT_ID_RE,
   ASPECT_RATIOS,
@@ -15,46 +17,12 @@ import {
   rejectUnknownFields,
 } from "./validate.ts";
 
-export interface Ctx {
-  req: Request;
-  env: Env;
-  cfg: AppConfig;
-  url: URL;
-  identity: Identity;
-  requestId: string;
-  /** Capture groups from the route pattern. */
-  params: string[];
-}
-
-export interface Route {
-  method: "GET" | "POST" | "PATCH";
-  pattern: RegExp;
-  /** Mutating routes get Origin enforcement and the stricter write rate limit. */
-  write: boolean;
-  handler: (ctx: Ctx) => Promise<Response>;
-}
+export type { Ctx, Route } from "./route-types.ts";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
 // ---------- helpers ----------
-
-function auditStatement(
-  ctx: Ctx,
-  eventType: string,
-  refs: { account_id?: string; job_id?: string },
-  detail: Record<string, unknown>,
-): D1PreparedStatement {
-  return ctx.env.DB.prepare(
-    "INSERT INTO audit_events(id,account_id,job_id,event_type,detail_json) VALUES(?,?,?,?,?)",
-  ).bind(
-    crypto.randomUUID(),
-    refs.account_id ?? null,
-    refs.job_id ?? null,
-    eventType,
-    JSON.stringify({ actor: ctx.identity.email, request_id: ctx.requestId, ...detail }),
-  );
-}
 
 function encodeCursor(createdAt: string, id: string): string {
   return asciiToB64url(JSON.stringify([createdAt, id]));
@@ -108,6 +76,8 @@ function isUniqueViolation(error: unknown): boolean {
 // ---------- handlers ----------
 
 async function me(ctx: Ctx): Promise<Response> {
+  // Owner routes are only reachable by owner identities (enforced in the request pipeline).
+  if (ctx.identity.kind !== "owner") throw new HttpError(403, "forbidden", "This identity is not allowed to use this endpoint");
   return jsonResponse({ email: ctx.identity.email, source: ctx.identity.source });
 }
 
@@ -201,9 +171,10 @@ async function listJobs(ctx: Ctx): Promise<Response> {
     binds.push(cursor[0], cursor[0], cursor[1]);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  // worker_id / lease_token are deliberately not exposed to the PWA.
   const { results } = await ctx.env.DB.prepare(
-    `SELECT j.id,j.project_id,j.scene_id,j.account_id,j.engine,j.status,j.attempts,j.error_code,
-            j.result_key,j.created_at,j.started_at,j.finished_at,
+    `SELECT j.id,j.project_id,j.scene_id,j.account_id,j.engine,j.status,j.attempts,j.max_attempts,j.cancel_requested,
+            j.error_code,j.result_key,j.created_at,j.started_at,j.finished_at,
             a.slot AS account_slot,a.label AS account_label
        FROM jobs j JOIN accounts a ON a.id = j.account_id
        ${where}
@@ -301,27 +272,86 @@ async function createJob(ctx: Ctx): Promise<Response> {
   return jsonResponse({ id, status: "queued" }, 201);
 }
 
+interface CancelRow {
+  id: string;
+  account_id: string;
+  status: string;
+  cancel_requested: number;
+}
+
+/**
+ * Safe cancellation:
+ *  - queued / waiting_for_user: no worker owns it, so it is cancelled immediately (200).
+ *  - claimed / running: a worker may be mid-generation, so the owner only records a request (202);
+ *    the lease holder sees it on its next heartbeat and acknowledges with /api/worker/.../cancel-ack.
+ *    If the worker dies instead, stale-lease recovery turns the request into `cancelled`.
+ *  - final states: 409.
+ */
 async function cancelJob(ctx: Ctx): Promise<Response> {
+  const id = ctx.params[0];
+  const job = await ctx.env.DB.prepare("SELECT id,account_id,status,cancel_requested FROM jobs WHERE id=?")
+    .bind(id)
+    .first<CancelRow>();
+  if (!job) throw new HttpError(404, "job_not_found", "Job not found");
+
+  const immediate = await ctx.env.DB.batch([
+    ctx.env.DB.prepare(
+      "UPDATE jobs SET status='cancelled', finished_at=datetime(?/1000,'unixepoch'), updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('queued','waiting_for_user')",
+    ).bind(ctx.now(), id),
+    auditIfChanged(ctx, "job.cancelled", id, { previous_status: job.status }),
+  ]);
+  if (immediate[0].meta.changes === 1) return jsonResponse({ id, status: "cancelled" });
+
+  const requested = await ctx.env.DB.batch([
+    ctx.env.DB.prepare(
+      "UPDATE jobs SET cancel_requested=1, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('claimed','running') AND cancel_requested=0",
+    ).bind(id),
+    auditIfChanged(ctx, "job.cancel_requested", id, { previous_status: job.status }),
+  ]);
+  const current = await ctx.env.DB.prepare("SELECT status,cancel_requested FROM jobs WHERE id=?")
+    .bind(id)
+    .first<{ status: string; cancel_requested: number }>();
+  if (requested[0].meta.changes === 1) {
+    return jsonResponse({ id, status: current?.status ?? job.status, cancel_requested: true }, 202);
+  }
+  if (current && (ACTIVE_STATUSES as readonly string[]).includes(current.status) && current.cancel_requested === 1) {
+    return jsonResponse({ id, status: current.status, cancel_requested: true, already_requested: true }, 202);
+  }
+  throw new HttpError(409, "job_not_cancellable", "Job is already finished", {
+    status: current?.status ?? job.status,
+  });
+}
+
+/** waiting_for_user -> queued once the owner has fixed the account (it must be `ready` again). */
+async function resumeJob(ctx: Ctx): Promise<Response> {
   const id = ctx.params[0];
   const job = await ctx.env.DB.prepare("SELECT id,account_id,status FROM jobs WHERE id=?")
     .bind(id)
     .first<{ id: string; account_id: string; status: string }>();
   if (!job) throw new HttpError(404, "job_not_found", "Job not found");
-
-  const result = await ctx.env.DB.prepare(
-    "UPDATE jobs SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='queued'",
-  )
-    .bind(id)
-    .run();
-  if (result.meta.changes === 0) {
-    const current = await ctx.env.DB.prepare("SELECT status FROM jobs WHERE id=?").bind(id).first<{ status: string }>();
-    throw new HttpError(409, "job_not_cancellable", "Only queued jobs can be cancelled", {
-      status: current?.status ?? job.status,
-    });
+  if (job.status !== "waiting_for_user") {
+    throw new HttpError(409, "job_not_resumable", "Only jobs waiting for the user can be resumed", { status: job.status });
   }
-  // Audited only after the state change is confirmed, so the log never claims a cancel that did not happen.
-  await auditStatement(ctx, "job.cancelled", { account_id: job.account_id, job_id: id }, { previous_status: "queued" }).run();
-  return jsonResponse({ id, status: "cancelled" });
+
+  // Waiting for re-authentication is not a failure, so the attempt it consumed is given back.
+  const results = await ctx.env.DB.batch([
+    ctx.env.DB.prepare(
+      `UPDATE jobs SET status='queued', error_code=NULL, error_message=NULL, worker_id=NULL, lease_token=NULL,
+                       available_at=0, attempts=MAX(attempts-1,0), updated_at=CURRENT_TIMESTAMP
+        WHERE id=? AND status='waiting_for_user'
+          AND EXISTS (SELECT 1 FROM accounts WHERE id=jobs.account_id AND status='ready')`,
+    ).bind(id),
+    auditIfChanged(ctx, "job.resumed", id, {}),
+  ]);
+  if (results[0].meta.changes === 1) return jsonResponse({ id, status: "queued" });
+
+  const account = await ctx.env.DB.prepare("SELECT status FROM accounts WHERE id=?")
+    .bind(job.account_id)
+    .first<{ status: string }>();
+  if (account && account.status !== "ready") {
+    throw new HttpError(409, "account_not_ready", "Account is not ready", { status: account.status });
+  }
+  throw new HttpError(409, "job_not_resumable", "Only jobs waiting for the user can be resumed");
 }
 
 async function listAudit(ctx: Ctx): Promise<Response> {
@@ -358,17 +388,20 @@ async function listAudit(ctx: Ctx): Promise<Response> {
 // ---------- route table ----------
 
 const ACCOUNT_PATH = /^\/api\/accounts\/(acct-(?:0[1-9]|10))$/;
-const JOB_CANCEL_PATH =
-  /^\/api\/jobs\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\/cancel$/;
+const JOB_ACTION_PATH = (action: string) =>
+  new RegExp(`^/api/jobs/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/${action}$`);
 
-export const routes: Route[] = [
-  { method: "GET", pattern: /^\/api\/me$/, write: false, handler: me },
-  { method: "GET", pattern: /^\/api\/accounts$/, write: false, handler: listAccounts },
-  { method: "PATCH", pattern: ACCOUNT_PATH, write: true, handler: patchAccount },
-  { method: "GET", pattern: /^\/api\/projects$/, write: false, handler: listProjects },
-  { method: "POST", pattern: /^\/api\/projects$/, write: true, handler: createProject },
-  { method: "GET", pattern: /^\/api\/jobs$/, write: false, handler: listJobs },
-  { method: "POST", pattern: /^\/api\/jobs$/, write: true, handler: createJob },
-  { method: "POST", pattern: JOB_CANCEL_PATH, write: true, handler: cancelJob },
-  { method: "GET", pattern: /^\/api\/audit$/, write: false, handler: listAudit },
+const ownerRoutes: Route[] = [
+  { method: "GET", pattern: /^\/api\/me$/, write: false, audience: "owner", handler: me },
+  { method: "GET", pattern: /^\/api\/accounts$/, write: false, audience: "owner", handler: listAccounts },
+  { method: "PATCH", pattern: ACCOUNT_PATH, write: true, audience: "owner", handler: patchAccount },
+  { method: "GET", pattern: /^\/api\/projects$/, write: false, audience: "owner", handler: listProjects },
+  { method: "POST", pattern: /^\/api\/projects$/, write: true, audience: "owner", handler: createProject },
+  { method: "GET", pattern: /^\/api\/jobs$/, write: false, audience: "owner", handler: listJobs },
+  { method: "POST", pattern: /^\/api\/jobs$/, write: true, audience: "owner", handler: createJob },
+  { method: "POST", pattern: JOB_ACTION_PATH("cancel"), write: true, audience: "owner", handler: cancelJob },
+  { method: "POST", pattern: JOB_ACTION_PATH("resume"), write: true, audience: "owner", handler: resumeJob },
+  { method: "GET", pattern: /^\/api\/audit$/, write: false, audience: "owner", handler: listAudit },
 ];
+
+export const routes: Route[] = [...ownerRoutes, ...workerRoutes];

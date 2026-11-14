@@ -10,8 +10,9 @@ import {
   isOriginAllowed,
   jsonResponse,
 } from "./http.ts";
+import { recoverStale } from "./queue.ts";
 import { routes } from "./routes.ts";
-import type { Ctx } from "./routes.ts";
+import type { Ctx, Route } from "./route-types.ts";
 import type { Deps, Env, Identity } from "./types.ts";
 
 const ALLOWED_METHODS = "GET, POST, PATCH, OPTIONS";
@@ -20,8 +21,9 @@ const RATE_LIMIT_RETRY_AFTER_S = "60";
 /**
  * Request pipeline (order matters):
  *  1. /health (public, no secrets)  2. config validation (fail closed)
- *  3. CORS preflight  4. identity (Access JWT)  5. allowlist authorization
- *  6. Origin check for writes  7. rate limit  8. route + validation + audit
+ *  3. CORS preflight  4. identity (Access JWT)  5. allowlist authorization (owner email / service token)
+ *  6. route audience (owner routes <-> owners only, worker routes <-> service tokens only)
+ *  7. Origin check for writes  8. rate limit  9. route + validation + audit
  */
 export function createApp(overrides: Partial<Deps> = {}) {
   const deps: Deps = {
@@ -33,7 +35,7 @@ export function createApp(overrides: Partial<Deps> = {}) {
   async function authenticate(req: Request, url: URL, cfg: AppConfig, requestId: string): Promise<Identity> {
     // Local development only: never active unless APP_ENV is exactly "development".
     if (cfg.devAuthEmail && isLoopbackHost(url.hostname)) {
-      return { email: cfg.devAuthEmail, source: "dev" };
+      return { kind: "owner", email: cfg.devAuthEmail, source: "dev" };
     }
     const token = req.headers.get("cf-access-jwt-assertion");
     if (!token || !cfg.teamDomain || !cfg.aud) {
@@ -48,19 +50,28 @@ export function createApp(overrides: Partial<Deps> = {}) {
       console.warn(JSON.stringify({ level: "warn", event: "auth.rejected", reason: result.reason, request_id: requestId }));
       throw new HttpError(401, "unauthorized", "Authentication required");
     }
+    if (result.kind === "service") {
+      if (!cfg.allowedServiceTokens.has(result.clientId)) {
+        console.warn(JSON.stringify({ level: "warn", event: "auth.forbidden_service", request_id: requestId }));
+        throw new HttpError(403, "forbidden", "This identity is not allowed to use this API");
+      }
+      return { kind: "service", clientId: result.clientId, source: "service" };
+    }
     if (!cfg.allowedEmails.has(result.email)) {
       console.warn(JSON.stringify({ level: "warn", event: "auth.forbidden", request_id: requestId }));
       throw new HttpError(403, "forbidden", "This identity is not allowed to use this API");
     }
-    return { email: result.email, source: "access" };
+    return { kind: "owner", email: result.email, source: "access" };
   }
 
-  async function enforceRateLimit(env: Env, identity: Identity, write: boolean, requestId: string): Promise<void> {
-    const limiter = write ? env.RL_WRITE : env.RL_READ;
-    if (!limiter) return; // only possible in development; production config requires both bindings
+  async function enforceRateLimit(env: Env, identity: Identity, route: Route, requestId: string): Promise<void> {
+    const limiter = route.audience === "worker" ? env.RL_WORKER : route.write ? env.RL_WRITE : env.RL_READ;
+    if (!limiter) return; // only possible in development; production config requires the bindings
+    const key =
+      identity.kind === "service" ? `s:${identity.clientId}` : `${route.write ? "w" : "r"}:${identity.email}`;
     let allowed = true;
     try {
-      allowed = (await limiter.limit({ key: `${write ? "w" : "r"}:${identity.email}` })).success;
+      allowed = (await limiter.limit({ key })).success;
     } catch (error) {
       // The limiter is approximate by design; a limiter fault must not take the API down.
       console.error(JSON.stringify({ level: "error", event: "ratelimit.error", request_id: requestId, message: String(error) }));
@@ -117,15 +128,38 @@ export function createApp(overrides: Partial<Deps> = {}) {
       });
     }
 
+    // Least privilege: the worker's service token reaches only /api/worker/*, owners never do.
+    if ((route.audience === "worker") !== (identity.kind === "service")) {
+      console.warn(JSON.stringify({ level: "warn", event: "auth.wrong_audience", kind: identity.kind, request_id: requestId }));
+      throw new HttpError(403, "forbidden", "This identity is not allowed to use this endpoint");
+    }
+
     if (route.write) enforceOrigin(req, url, cfg);
-    await enforceRateLimit(env, identity, route.write, requestId);
+    await enforceRateLimit(env, identity, route, requestId);
 
     const match = route.pattern.exec(url.pathname);
-    const ctx: Ctx = { req, env, cfg, url, identity, requestId, params: match ? match.slice(1) : [] };
+    const ctx: Ctx = { req, env, cfg, url, identity, requestId, params: match ? match.slice(1) : [], now: deps.now };
     return route.handler(ctx);
   }
 
+  /** Stale-lease recovery without a claim; also exposed for tests. Never throws. */
+  async function maintain(env: Env): Promise<void> {
+    try {
+      const outcome = await recoverStale(env.DB, deps.now());
+      if (outcome.requeued + outcome.failed + outcome.cancelled > 0) {
+        console.warn(JSON.stringify({ level: "warn", event: "queue.recovered", ...outcome }));
+      }
+    } catch (error) {
+      console.error(JSON.stringify({ level: "error", event: "queue.recover_failed", message: String(error) }));
+    }
+  }
+
   return {
+    maintain,
+    /** Cron trigger (see wrangler.toml [triggers]). */
+    async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+      ctx.waitUntil(maintain(env));
+    },
     async fetch(req: Request, env: Env): Promise<Response> {
       const requestId = crypto.randomUUID();
       const cors = { value: {} as Record<string, string> };
