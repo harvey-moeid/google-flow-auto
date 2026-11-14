@@ -2,14 +2,14 @@ name = "google-flow-auto-api"
 main = "src/index.ts"
 compatibility_date = "2026-11-14"
 
-# The API must only be reachable through the Cloudflare Access protected hostname.
-# workers.dev / preview URLs would bypass Access, so they are disabled. The Worker also
-# verifies the Access JWT itself, so a misrouted request is still rejected.
+# The API authenticates the owner with a password (signed HttpOnly session cookie) and the browser
+# worker with a bearer token (see src/auth.ts). Serving it only on the PWA hostname keeps the cookie
+# first-party and avoids CORS, so the workers.dev and preview hostnames are disabled.
 workers_dev = false
 preview_urls = false
 
 # Serve the API on the SAME hostname as the PWA (same-origin, no CORS needed).
-# Uncomment and set your zone/hostname after creating the Access application:
+# Uncomment and set your zone/hostname:
 # routes = [{ pattern = "app.example.com/api/*", zone_name = "example.com" }]
 
 # Stale-lease recovery runs every minute even when no worker is polling, so a crashed worker's
@@ -46,7 +46,16 @@ namespace_id = "7102"
   limit = 20
   period = 60
 
-# Worker (service token) endpoints poll and heartbeat, so they get their own, larger bucket.
+# Password logins: keyed by client address and checked BEFORE any password comparison.
+[[ratelimits]]
+name = "RL_LOGIN"
+namespace_id = "7104"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+# Worker (bearer token) endpoints poll and heartbeat, so they get their own, larger bucket.
 [[ratelimits]]
 name = "RL_WORKER"
 namespace_id = "7103"
@@ -57,16 +66,15 @@ namespace_id = "7103"
 
 [vars]
 APP_ENV = "production"
-# From Zero Trust > Settings > Custom pages / team domain, e.g. myteam.cloudflareaccess.com
-CF_ACCESS_TEAM_DOMAIN = "REPLACE_WITH_TEAM.cloudflareaccess.com"
-# Application Audience (AUD) tag of the Access application (64 hex characters).
-CF_ACCESS_AUD = "REPLACE_WITH_ACCESS_APPLICATION_AUD_TAG"
 # Live (non dry-run) engines stay disabled until Phase 5 qualifies an adapter.
 # This is also the live kill switch: while "false" the queue only hands out dry-run jobs.
 LIVE_ENGINES_ENABLED = "false"
-# Set ALLOWED_EMAILS as a secret so owner emails never enter git:
-#   npx wrangler secret put ALLOWED_EMAILS      (comma separated, e.g. owner@example.com)
-# Worker endpoints (/api/worker/*) accept ONLY Access service tokens. List the allowed service token
-# Client IDs (the "common_name" claim, e.g. abc123.access) as a secret; empty/unset = worker API disabled:
-#   npx wrangler secret put ALLOWED_SERVICE_TOKENS
-# Optional ALLOWED_ORIGINS (extra exact origins) can also be set with `wrangler secret put`.
+
+# Secrets (never put these in this file or in git; each is set once with `wrangler secret put`):
+#   npx wrangler secret put OWNER_PASSWORD   owner login password, at least 10 characters (use a long random one)
+#   npx wrangler secret put SESSION_SECRET   random key that signs session cookies, at least 32 characters;
+#                                            generate with `openssl rand -base64 48`; changing it logs everyone out
+#   npx wrangler secret put WORKER_TOKEN     bearer token of the browser worker, at least 32 characters
+#                                            (letters, digits and . _ ~ + / = - only); unset = worker API disabled
+# Optional: ALLOWED_ORIGINS (extra exact origins for CORS and writes) can also be set as a secret.
+# Until OWNER_PASSWORD and SESSION_SECRET are set the API fails closed (503) on every /api/* call.
