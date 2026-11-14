@@ -118,7 +118,7 @@ export async function readJsonObject(req: Request, maxBytes = MAX_BODY_BYTES): P
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
   } catch {
     throw new HttpError(400, "invalid_json", "Request body is not valid JSON");
   }

@@ -38,7 +38,7 @@ interface KeyCache {
 
 function decodeJson(segment: string): Record<string, unknown> | null {
   try {
-    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(b64urlToBytes(segment)));
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(b64urlToBytes(segment)));
     return value !== null && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : null;
