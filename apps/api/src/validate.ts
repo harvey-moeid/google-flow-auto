@@ -3,6 +3,12 @@ import { HttpError } from "./http.ts";
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const ACCOUNT_ID_RE = /^acct-(0[1-9]|10)$/;
+/** Free-form worker process identifier chosen by the worker (e.g. host name + pid). */
+export const WORKER_ID_RE = /^[A-Za-z0-9._:-]+$/;
+/** Machine-readable error classification reported by a worker, e.g. `engine_timeout`. */
+export const ERROR_CODE_RE = /^[a-z][a-z0-9_]{1,63}$/;
+/** Object key of a result in private storage (Phase 6). No leading slash, no `..` segments. */
+export const RESULT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
 const CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/;
 
 export interface Issue {
@@ -70,6 +76,54 @@ export function readString(
     return undefined;
   }
   return value;
+}
+
+interface IntRules {
+  required?: boolean;
+  min: number;
+  max: number;
+}
+
+/** Reads an optional/required JSON integer within [min, max]. Strings and floats are rejected. */
+export function readInt(
+  body: Record<string, unknown>,
+  key: string,
+  rules: IntRules,
+  issues: Issues,
+): number | undefined {
+  const raw = body[key];
+  if (raw === undefined) {
+    if (rules.required) issues.add(key, "required");
+    return undefined;
+  }
+  if (typeof raw !== "number" || !Number.isInteger(raw)) {
+    issues.add(key, "must_be_integer");
+    return undefined;
+  }
+  if (raw < rules.min || raw > rules.max) {
+    issues.add(key, "out_of_range");
+    return undefined;
+  }
+  return raw;
+}
+
+/** Reads an optional/required JSON boolean. "true"/1 are rejected. */
+export function readBoolean(
+  body: Record<string, unknown>,
+  key: string,
+  rules: { required?: boolean },
+  issues: Issues,
+): boolean | undefined {
+  const raw = body[key];
+  if (raw === undefined) {
+    if (rules.required) issues.add(key, "required");
+    return undefined;
+  }
+  if (typeof raw !== "boolean") {
+    issues.add(key, "must_be_boolean");
+    return undefined;
+  }
+  return raw;
 }
 
 export function readEnum<T extends string>(
