@@ -6,6 +6,7 @@ Android-first control-plane scaffold for up to 10 manually enrolled Google accou
 - [Implementation plan to final version](docs/IMPLEMENTATION_PLAN.md)
 - [Handoff for the next coding session/agent](docs/HANDOFF.md)
 - [Android deployment notes](docs/DEPLOY_ANDROID.md)
+- [Worker operations and manual enrollment](docs/WORKER_OPERATIONS.md)
 
 ## Components
 - `apps/pwa`: React + Vite Android-friendly PWA dashboard.

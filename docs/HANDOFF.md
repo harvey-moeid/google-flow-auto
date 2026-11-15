@@ -147,3 +147,24 @@ At the end of each work session update:
 - Security review: no secrets added; docs only describe secret names, never values.
 - Blockers and decisions: unchanged. Not changed here: `docs/QUEUE_PROTOCOL.md` is referenced by the `worker-routes.ts` comment but was not found in `docs/`; the baseline sections ("Current code baseline", the original gap list in the plan) were annotated rather than rewritten.
 - Next concrete task: unchanged from Session 5.
+
+### Session 7 — Phase 4B (worker health and manual enrollment)
+- Current phase: Phase 4B merged; Phase 4C is the next UI/operations slice.
+- Branch / PR / commit: feat/phase-4b-worker-health-enrollment, PR #14 merged to main; merge commit 9682efc, feature commit 330f7a1.
+- Implemented: process heartbeat (idle/busy/stopping), disk free/total, local profile-directory count, owner-only GET /api/workers with 90-second online window and low-disk indicator; owner-attested readiness reporting; Python --enroll acct-NN command opens only the selected persistent profile for manual login.
+- Safety: readiness=ready requires explicit owner_confirmed=true; browser closes before readiness is reported; worker health is observational and does not affect queue claims; profile paths, emails, cookies and contents are not sent to the API.
+- CI: Test run 43671494057 completed successfully. The Phase 4B code includes API tests and Python health/enrollment tests.
+- Deployment: no real Cloudflare staging or persistent-host test was performed.
+- Remaining Phase 4 gaps: PWA worker operations UI, persistent host/service supervisor, encrypted profile backup/restore, restart isolation test for all ten profiles, real D1/API staging smoke.
+- Next concrete task: Phase 4C — expose existing worker health in the Android PWA and document safe manual enrollment; keep live engines disabled.
+
+### Session 8 — Phase 4C (worker operations dashboard)
+- Current phase: Phase 4C UI/runbook implemented on feat/phase-4c-worker-operations; PR #15 is open against main.
+- Latest commit: 6616b1b69f1e10fc2cabdd3ccd5a84149e219010.
+- Files changed: apps/pwa/src/screens/WorkerOperations.tsx (new), apps/pwa/src/App.tsx, apps/pwa/src/api.ts, apps/pwa/src/screens.css, docs/WORKER_OPERATIONS.md (new), docs/IMPLEMENTATION_PLAN.md, README.md.
+- Behaviour: Accounts tab reads the existing owner-only GET /api/workers endpoint, refreshes every 15 seconds, and displays online/offline, idle/busy/stopping, last heartbeat, profile count and disk state. Selected account enrollment instructions show the exact CLI command; the dashboard does not claim remote host control.
+- Safety: unknown disk readings are shown as unknown, not healthy; enrollment instructions require no active job and a graceful worker stop first; Google login remains manual on the trusted host. No secrets, API routes, D1 migrations or live-engine flags were changed.
+- CI: runs 43672318453, 43672679113 and 43673046891 completed successfully. Latest run 43673046891 passed pwa-build (npm ci, API typecheck/tests, script tests, PWA build, secret scan) and python-check (compileall, pytest, dry-run smoke).
+- Deployment: not deployed; no production or staging resources changed.
+- Remaining blockers: persistent host/service supervision, encrypted backup/restore and proof, real Cloudflare D1/API staging smoke, Android device E2E, private R2 media pipeline, and permitted live adapter qualification.
+- Next concrete task: finish review/merge PR #15 after owner approval, then implement and verify persistent worker-host lifecycle without storing browser profiles in GitHub, D1, R2 or logs.

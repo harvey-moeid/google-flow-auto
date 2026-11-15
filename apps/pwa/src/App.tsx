@@ -7,6 +7,7 @@ import { Projects } from "./screens/Projects";
 import { ProjectEditor } from "./screens/ProjectEditor";
 import { Review } from "./screens/Review";
 import { JobScreen, Queue } from "./screens/Jobs";
+import { WorkerOperations } from "./screens/WorkerOperations";
 
 type Tab = "Dashboard" | "Accounts" | "Projects" | "Queue";
 type View =
@@ -145,6 +146,7 @@ export default function App() {
         status: "needs_login",
       }));
   const ready = accounts.filter((a) => a.status === "ready").length;
+  const selectedAccount = slots.find((account) => account.id === selected) ?? slots[0];
 
   if (auth === "checking") {
     return (
@@ -220,6 +222,7 @@ export default function App() {
             </button>
           ))}
         </nav>
+        {tab === "Accounts" ? <WorkerOperations account={selectedAccount} /> : null}
         {tab === "Dashboard" || tab === "Accounts" ? (
           <section className="panel">
             <h2>

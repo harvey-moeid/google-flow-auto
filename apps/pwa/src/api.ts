@@ -5,6 +5,16 @@
  * bundle is public. The password is only ever sent to /api/login and is not kept after the call.
  */
 export type Account = { id: string; slot: number; label: string; email?: string | null; status: string };
+export type WorkerStatus = {
+  worker_id: string;
+  state: "idle" | "busy" | "stopping";
+  online: boolean;
+  last_seen_at: string;
+  disk_free_bytes: number | null;
+  disk_total_bytes: number | null;
+  disk_low: boolean;
+  profile_count: number;
+};
 export type Job = {
   id: string;
   status: string;
@@ -62,6 +72,7 @@ const MESSAGES: Record<string, string> = {
   idempotency_key_conflict: "Permintaan ini bentrok dengan pengiriman sebelumnya. Muat ulang dan coba lagi.",
   live_engine_disabled: "Engine live dinonaktifkan; gunakan mode dry-run.",
   payload_too_large: "Isian terlalu panjang.",
+  worker_limit_reached: "Batas jumlah worker yang tercatat sudah tercapai.",
 };
 
 export function describeError(error: unknown): string {
