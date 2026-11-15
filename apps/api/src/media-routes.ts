@@ -49,10 +49,24 @@ async function readBoundedBody(ctx: Ctx): Promise<Uint8Array> {
     throw new HttpError(413, "media_too_large", "Media exceeds the maximum upload size");
   }
   if (!ctx.req.body) throw new HttpError(400, "empty_media", "Media body is required");
-  const bytes = new Uint8Array(await ctx.req.arrayBuffer());
-  if (bytes.length === 0) throw new HttpError(400, "empty_media", "Media body is required");
-  if (bytes.length > MAX_MEDIA_BYTES) throw new HttpError(413, "media_too_large", "Media exceeds the maximum upload size");
-  if (declared !== null && Number(declared) !== bytes.length) throw new HttpError(400, "content_length_mismatch", "Content-Length does not match the received body");
+  const reader = ctx.req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_MEDIA_BYTES) {
+      await reader.cancel();
+      throw new HttpError(413, "media_too_large", "Media exceeds the maximum upload size");
+    }
+    chunks.push(value);
+  }
+  if (size === 0) throw new HttpError(400, "empty_media", "Media body is required");
+  if (declared !== null && Number(declared) !== size) throw new HttpError(400, "content_length_mismatch", "Content-Length does not match the received body");
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return bytes;
 }
 
