@@ -31,6 +31,6 @@ On top of that the Worker enforces a strict origin policy for writes, per-identi
 API: `cp apps/api/.dev.vars.example apps/api/.dev.vars && cd apps/api && npm run dev` (sign in with the `OWNER_PASSWORD` from `.dev.vars`)  
 PWA: `cd apps/pwa && npm run dev` (proxies `/api` to the local Worker)  
 Checks: `npm run check` from the repository root (API typecheck + tests, script tests, PWA build, secret scan)  
-Worker: `cd engine && python -m venv .venv && pip install -r requirements.txt && playwright install chromium && python -m worker.main` (configure `API_BASE_URL`, `WORKER_TOKEN` and `WORKER_ID` as in `engine/.env.example`; the token must match the API's `WORKER_TOKEN` secret)
+Worker: `cd engine && python -m venv .venv && pip install -r requirements.txt && playwright install chromium && python -m worker.main` runs a single local test job. To consume the queue API, add `--serve` (poll until stopped) or `--once` (at most one job) and configure `API_BASE_URL`, `WORKER_TOKEN` and `WORKER_ID` as in `engine/.env.example`; the token must match the API's `WORKER_TOKEN` secret.
 
 Start in dry-run mode and test one account before expanding. This is a starter scaffold, not production-ready.

@@ -68,13 +68,14 @@ There is no Cloudflare Access in front of the app. The Worker authenticates ever
 
 ## Browser worker
 Run the Python worker on a trusted persistent host with a browser display. The owner manually signs in to each isolated account profile. The current scaffold does not provide remote desktop enrollment or secure remote profile upload.
-The worker talks to the API under `/api/worker/*` (claim, start, heartbeat, complete, fail, wait, cancel-ack) using the bearer `WORKER_TOKEN`. Configure it in `engine/.env`
+To consume the queue, start it from `engine/` with `python -m worker.main --serve` (poll until stopped) or `--once` (at most one job); without those flags it runs a single local test job and does not call the API.
+It talks to `/api/worker/*` (claim, start, heartbeat, complete, fail, wait, cancel-ack) using the bearer `WORKER_TOKEN`. Configure it in `engine/.env`
 (see `engine/.env.example`): `API_BASE_URL` must be `https` (plain `http` is accepted only for localhost, so the token never travels unencrypted), `WORKER_TOKEN` must equal the Worker secret, and `WORKER_ID` identifies this worker.
-Keep the token on the worker host only; never commit it or put it in GitHub.
+Keep the token on the worker host only; never commit it or put it in GitHub. Only the `dry-run` engine is functional; queue jobs for `flowkit` / `gflow` fail as non-retryable `engine_not_configured`.
 
 ## Production blockers
 - A tested and permitted Google Flow adapter.
-- Durable global lease/locking across worker instances.
+- The durable queue lease with fencing tokens exists, but it has only been exercised against SQLite standing in for D1 (see `docs/HANDOFF.md`, Sessions 2 and 5); verify it on real D1 and with `wrangler dev` plus `python -m worker.main --once`.
 - Secure manual enrollment and profile backup lifecycle.
 - Private R2 upload and signed download URLs.
 - Real Cloudflare resource IDs and secrets, and a verified staging deployment.

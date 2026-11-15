@@ -1,8 +1,8 @@
 /**
- * Worker-facing endpoints (/api/worker/*). Authenticated ONLY by an Access service token that is
- * listed in ALLOWED_SERVICE_TOKENS; owners cannot call these and service tokens cannot call owner
- * routes. Every mutation presents the (worker_id, fencing_token) issued by /claim; see queue.ts for
- * the invariants and docs/QUEUE_PROTOCOL.md for the wire protocol.
+ * Worker-facing endpoints (/api/worker/*). Authenticated ONLY by the worker bearer token (WORKER_TOKEN,
+ * see auth.ts); owners cannot call these and the worker token cannot call owner routes. Every mutation
+ * presents the (worker_id, fencing_token) issued by /claim; see queue.ts for the invariants and
+ * docs/QUEUE_PROTOCOL.md for the wire protocol.
  */
 import { HttpError, jsonResponse, readJsonObject } from "./http.ts";
 import {
