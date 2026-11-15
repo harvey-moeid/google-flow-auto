@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, asyncio, json, os, re, signal, socket, sys
+import argparse, asyncio, getpass, json, os, re, signal, socket, sys
 from dotenv import load_dotenv
 from accounts.profile_manager import ProfileManager
 from scheduler.sequential import SequentialScheduler, Job
@@ -10,6 +10,7 @@ from worker.api_client import HttpxTransport, WorkerApiClient
 from worker.enroll import DEFAULT_ENROLL_URL, enroll
 from worker.host_lock import HostLock, HostLocked
 from worker.loop import serve
+from worker.profile_backup import ProfileBackupError, create_backup, restore_backup
 
 load_dotenv()
 
@@ -78,6 +79,17 @@ async def run(args, data_dir, headless):
         await pm.close()
 
 
+def run_profile_backup(args, data_dir):
+    if args.backup_profiles:
+        passphrase = getpass.getpass("Backup passphrase (minimum 12 characters): ")
+        confirm = getpass.getpass("Confirm passphrase: ")
+        if passphrase != confirm:
+            raise ProfileBackupError("Passphrases do not match")
+        return create_backup(data_dir, args.backup_profiles, passphrase)
+    passphrase = getpass.getpass("Backup passphrase: ")
+    return restore_backup(data_dir, args.restore_profiles, passphrase)
+
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-id")
@@ -87,6 +99,9 @@ async def main():
     parser.add_argument("--once", action="store_true", help="poll the queue API for at most one job")
     parser.add_argument("--enroll", metavar="ACCOUNT_ID", help="open ONLY this slot's profile so the owner can sign in by hand (stop --serve first)")
     parser.add_argument("--audit-profiles", action="store_true", help="read-only profile isolation check; prints JSON (slot numbers and codes only), exit 1 on a problem")
+    backup = parser.add_mutually_exclusive_group()
+    backup.add_argument("--backup-profiles", metavar="FILE", help="create a new owner-encrypted profile backup (worker must be stopped)")
+    backup.add_argument("--restore-profiles", metavar="FILE", help="restore an encrypted backup only into an empty profile directory")
     args = parser.parse_args()
     data_dir = os.getenv("FLOW_WORKER_DATA_DIR", "./.worker-data")
     headless = os.getenv("FLOW_HEADLESS", "false").lower() == "true"
@@ -94,9 +109,17 @@ async def main():
         result = profile_audit.audit(data_dir)
         print(json.dumps(result.as_dict()))
         sys.exit(0 if result.ok else 1)
+    if args.backup_profiles or args.restore_profiles:
+        if args.serve or args.once or args.enroll or args.job_id:
+            parser.error("profile backup/restore cannot be combined with worker or job actions")
+        try:
+            with HostLock(data_dir):
+                print(json.dumps(run_profile_backup(args, data_dir)))
+        except (HostLocked, ProfileBackupError) as exc:
+            sys.exit(str(exc))
+        return
     if args.enroll and headless:
         sys.exit("--enroll needs a visible browser window; set FLOW_HEADLESS=false")
-    # Only one worker process may own the data directory (and so the ten profiles) at a time.
     try:
         lock = HostLock(data_dir).acquire()
     except HostLocked as exc:

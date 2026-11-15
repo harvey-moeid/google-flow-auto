@@ -3,46 +3,44 @@
 Repository: harvey-moeid/google-flow-auto  
 Product target: Android-first PWA control plane for 10 manually managed Google Flow account slots.  
 Fixed decisions: manual account enrollment and selection, one global sequential execution lane, hybrid adapters, free-first deployment.  
-Current baseline: Phase 4B merged to main (commit 9682efc); Phase 4C Worker Operations UI is in progress on feat/phase-4c-worker-operations.
+Current baseline: Phases 0–4D merged to main; Phase 4E encrypted local backup/restore implementation is the current work. No live adapter is enabled.
 
 ## Product and architecture decisions
-
 - PWA: React + TypeScript + Vite, installable from Android Chrome.
 - Control plane: Cloudflare Worker; metadata: D1; private media: R2.
 - Queue: durable queue plus one authoritative global lease/lock.
 - Browser execution: Python + Playwright on a trusted persistent host with encrypted storage. GitHub Actions is for CI/deploy, not persistent browser sessions.
 - Profiles: one isolated persistent profile per account slot; owner manually signs in. Never move profiles/cookies into GitHub, D1, CI artifacts, or logs.
 - Engines: FLOW KIT and gflow-cli adapters remain disabled until current interfaces, licenses, terms and reliability are verified.
-- Auth: owner password and signed expiring HttpOnly cookie; browser worker bearer token accepted only on worker endpoints. No privileged token in frontend build variables.
-- Policy: do not evade quotas/rate limits through account rotation; do not bypass CAPTCHA/security checks or use undocumented protected endpoints. Pause for manual reauthentication.
+- Auth: owner password and signed expiring HttpOnly cookie; browser worker bearer token accepted only on worker endpoints.
+- Policy: no quota/rate-limit evasion, CAPTCHA/security challenge bypass or undocumented protected endpoints. Pause for manual reauthentication.
 
 ## Phase progress
-
 | Phase | Status | Evidence / remaining work |
 |---|---|---|
-| 0–3B | Implemented and merged | See session records in docs/HANDOFF.md; private R2 media pipeline remains incomplete. |
-| 4A | Implemented and merged | Python worker claims and reports jobs; dry-run only. |
-| 4B | Implemented and merged | Worker heartbeat, health endpoint and owner-attested manual enrollment CLI. PR #14 / commit 9682efc. |
-| 4C | In progress | Android worker monitoring and manual enrollment runbook; persistent host, encrypted backup/restore and real staging smoke remain. |
+| 0–3B | Implemented and merged | Private R2 media pipeline remains incomplete. |
+| 4A | Merged | Worker claims and reports jobs; dry-run only. |
+| 4B | Merged | Heartbeat, health endpoint and owner-attested manual enrollment. |
+| 4C | Merged | Android worker monitoring and manual enrollment runbook. |
+| 4D | Merged | Host lock, profile isolation audit, marker and systemd template; real-host verification remains. |
+| 4E | In progress | Encrypted local backup/restore CLI; automated tests added. Separate-host restore and encrypted-volume proof remain owner-run. |
 | 5 | Not started | Qualify one permitted live adapter; blocker gate applies. |
 | 6 | Not started | Private R2 output/reference media pipeline. |
 | 7 | Not started | Production hardening, backup/restore proof, Android E2E, staging and release. |
 
 ## Phase 4 — Browser worker and account lifecycle
-
 - [x] Python worker claims, executes dry-run and reports queue outcomes (4A).
 - [x] Worker process heartbeat, online/offline state, disk/profile count and owner status API (4B).
 - [x] Manual owner-confirmed enrollment for one selected isolated profile (4B).
-- [ ] Android PWA worker monitoring and clear manual enrollment instructions (4C).
-- [ ] Persistent host/service supervisor, graceful restart and operational monitoring.
-- [ ] Encrypted owner-controlled profile backup and demonstrated restore.
-- [ ] Verify 10 isolated profiles survive a host restart without shared profile access.
+- [x] Android PWA worker monitoring and clear manual enrollment instructions (4C).
+- [x] Host single-process lock, profile isolation audit and systemd service template (4D; code/CI only).
+- [x] Owner-controlled encrypted local backup/restore CLI (4E; code/CI only).
+- [ ] Prove encrypted volume, all ten persistent isolated profiles, service supervision, kill recovery, and backup restore on a separate owner-controlled host.
 - [ ] Real Cloudflare staging smoke with worker token, API and D1.
 
-Phase 4 exit: all ten profiles remain isolated and recoverable through restart; reauth pauses safely; one global sequential lane remains authoritative; operational status and recovery are verified on staging.
+Phase 4 exit: all ten profiles remain isolated and recoverable through restart; reauth pauses safely; one global sequential lane remains authoritative; operational status and recovery are verified on staging. Code completion alone does not satisfy the operational exit.
 
 ## Phase 5 — Qualify a permitted live engine adapter
-
 - Audit FLOW KIT and gflow-cli source, license, authentication and supported integration surface.
 - Record permitted workflows and manual interaction requirements.
 - Define versioned adapter contract: capabilities, validate, submit, poll, cancel-if-supported, fetch result and classify errors.
@@ -50,11 +48,9 @@ Phase 4 exit: all ten profiles remain isolated and recoverable through restart; 
 - Add mock contract tests and supervised integration on one owner-controlled account.
 - Test output integrity, quota handling, transient failures and reauthentication.
 - Keep dry-run default; require explicit live-mode confirmation and retain the kill switch.
-
 Blocker gate: if no stable permitted interface exists, do not reverse-engineer protected endpoints. Release as manual-assisted, not fully automated.
 
 ## Phase 6 — Private media pipeline
-
 - Upload results to private R2 with MIME/size checks and checksum.
 - Retry uploads independently of generation where possible.
 - Store object key, MIME, dimensions, duration, checksum and provenance.
@@ -62,7 +58,6 @@ Blocker gate: if no stable permitted interface exists, do not reverse-engineer p
 - Add retention, deletion and orphan cleanup.
 
 ## Phase 7 — Production hardening and release
-
 - Structured redacted logs, metrics and alerts for queue age, worker health, lease and error rates.
 - D1 backup/export and demonstrated restore; R2 retention/backup policy.
 - Dependency/secret scanning, lint, typecheck, tests and thresholds.
@@ -73,7 +68,6 @@ Blocker gate: if no stable permitted interface exists, do not reverse-engineer p
 - Tag release and publish operator guide.
 
 ## Final acceptance checklist
-
 - [ ] PWA installs and normal control works from Android.
 - [ ] Production identity/auth works; no privileged secret in frontend (logic CI-tested; staging not verified).
 - [ ] Ten account slots are manageable; manual enrollment and manual selection.
@@ -88,4 +82,4 @@ Blocker gate: if no stable permitted interface exists, do not reverse-engineer p
 - [ ] CI, security checks and Android staging E2E are green.
 - [ ] Free-tier limits, actual costs and operational dependencies are documented.
 
-Recommended next work: finish Phase 4C, then verify worker-host lifecycle and staging acceptance before Phase 5. Do not enable live generation before Phases 0–4 are verified.
+Recommended next work: complete owner-run Phase 4 verification (encrypted disk, service lifecycle, ten profiles, backup/restore on separate host and real D1/API staging smoke) before Phase 5. Do not enable live generation before Phases 0–4 are operationally verified.
