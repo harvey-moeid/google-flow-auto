@@ -113,6 +113,18 @@ async function claim(ctx: Ctx): Promise<Response> {
       engine: job.engine,
       attempt: job.attempts,
       max_attempts: job.max_attempts,
+      aspect_ratio: job.aspect_ratio,
+      // null when the scene was deleted after the job was queued; the worker must fail such a job
+      // as non-retryable instead of guessing a prompt.
+      scene:
+        job.scene_id !== null && job.scene_prompt !== null
+          ? {
+              id: job.scene_id,
+              order: job.scene_order,
+              prompt: job.scene_prompt,
+              duration_seconds: job.scene_duration_seconds,
+            }
+          : null,
     },
     lease: { fencing_token: job.fencing_token, expires_at: new Date(job.expires_at).toISOString() },
   });
