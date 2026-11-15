@@ -356,3 +356,16 @@ def test_adapter_output_metadata_rejects_boolean_or_out_of_range_values():
     for metadata in ({"width": True, "height": 10}, {"width": 20000, "height": 10}):
         with pytest.raises(media.MediaUploadError):
             media.outputs_of({"outputs": [{"path": "clip.png", **metadata}]})
+
+def test_video_metadata_can_include_dimensions_and_duration(tmp_path):
+    root = tmp_path / "out"
+    file = write(root, "clip.mp4", b"\x00\x00\x00\x18ftypisom" + b"x" * 20)
+    parsed = media.outputs_of({"outputs": [{"path": str(file), "width": 1920, "height": 1080, "duration_ms": 12500}]})
+    assert parsed[0]["width"] == 1920
+    assert parsed[0]["height"] == 1080
+    assert parsed[0]["duration_ms"] == 12500
+
+
+def test_image_metadata_cannot_include_duration():
+    with pytest.raises(media.MediaUploadError):
+        media.outputs_of({"outputs": [{"path": "still.png", "duration_ms": 1000}]})

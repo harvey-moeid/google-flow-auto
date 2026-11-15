@@ -61,7 +61,8 @@ def outputs_of(result) -> list[dict]:
         width = _metadata_integer(record.get("width"), MAX_DIMENSION)
         height = _metadata_integer(record.get("height"), MAX_DIMENSION)
         duration = _metadata_integer(record.get("duration_ms"), MAX_DURATION_MS)
-        if (width is None) != (height is None) or (width is not None and duration is not None):
+        mime = MIME_BY_SUFFIX.get(Path(record["path"]).suffix.lower())
+        if (width is None) != (height is None) or (mime in ("image/png", "image/jpeg", "image/webp") and duration is not None):
             raise MediaUploadError("invalid_media_metadata", False)
         outputs.append({"path": record["path"], "width": width, "height": height, "duration_ms": duration})
     return outputs
