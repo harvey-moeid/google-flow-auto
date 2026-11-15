@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlsplit
 
+from accounts.slots import slot_from_account_id
+
 WORKER_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 # (path, json body) -> (http status, parsed json body or None)
@@ -131,3 +133,28 @@ class WorkerApiClient:
 
     async def cancel_ack(self, job_id: str, token: int) -> None:
         await self._post(f"/api/worker/jobs/{job_id}/cancel-ack", self._ref(token))
+
+    # ---------- Phase 4b: worker health and account readiness ----------
+
+    async def report_status(
+        self,
+        state: str,
+        *,
+        profile_count: int,
+        disk_free_bytes: int | None = None,
+        disk_total_bytes: int | None = None,
+    ) -> None:
+        """Process-level heartbeat (idle/busy/stopping). Disk numbers are sent as a pair or not at all."""
+        body: dict = {"worker_id": self.worker_id, "state": state, "profile_count": profile_count}
+        if disk_free_bytes is not None and disk_total_bytes is not None:
+            body["disk_free_bytes"] = disk_free_bytes
+            body["disk_total_bytes"] = disk_total_bytes
+        await self._post("/api/worker/status", body)
+
+    async def report_readiness(self, account_id: str, status: str, *, owner_confirmed: bool = False) -> None:
+        """Reports the session state of one slot. `ready` is only accepted by the API with owner_confirmed=True."""
+        slot_from_account_id(account_id)  # strict acct-01..acct-10, so the URL path can never be forged
+        body = {"worker_id": self.worker_id, "status": status}
+        if owner_confirmed:
+            body["owner_confirmed"] = True
+        await self._post(f"/api/worker/accounts/{account_id}/readiness", body)
