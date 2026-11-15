@@ -19,14 +19,18 @@ export interface Route {
   pattern: RegExp;
   /** Mutating routes get Origin enforcement and the stricter write rate limit. */
   write: boolean;
-  /** owner = human with a password session; worker = bearer WORKER_TOKEN. Never both. */
-  audience: "owner" | "worker";
+  /**
+   * owner = human with a password session; worker = bearer WORKER_TOKEN; signed = unauthenticated
+   * holder of a short-lived HMAC-signed link, verified by the handler itself. Never combined.
+   */
+  audience: "owner" | "worker" | "signed";
   handler: (ctx: Ctx) => Promise<Response>;
 }
 
 /** Stable audit label for the caller. */
 export function actorOf(identity: Identity): string {
-  return identity.kind === "owner" ? identity.name : "worker";
+  if (identity.kind === "owner") return identity.name;
+  return identity.kind === "link" ? "link" : "worker";
 }
 
 export function auditStatement(

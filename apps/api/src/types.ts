@@ -31,7 +31,9 @@ export interface Env {
  */
 export type Identity =
   | { kind: "owner"; name: "owner"; source: "password" }
-  | { kind: "service"; source: "worker-token" };
+  | { kind: "service"; source: "worker-token" }
+  /** Holder of a short-lived signed media link (see media-routes.ts); reaches only GET /api/media/:id/content. */
+  | { kind: "link"; source: "signed-url" };
 
 /** Injectable side effects so session expiry and lease logic can be tested deterministically. */
 export interface Deps {
