@@ -222,6 +222,9 @@ export type JobMedia = {
   mime: string;
   size_bytes: number;
   sha256: string;
+  width: number | null;
+  height: number | null;
+  duration_ms: number | null;
   created_at: string;
 };
 

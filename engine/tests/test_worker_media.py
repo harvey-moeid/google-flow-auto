@@ -332,3 +332,27 @@ def test_reports_never_leak_paths_or_file_names(tmp_path):
     run_claim(api, FakeUpload(), {"outputs": [str(outside)]}, output_root=root)
     text = repr(api.calls)
     assert str(tmp_path) not in text and "private-name" not in text
+
+def test_adapter_output_metadata_is_validated_and_forwarded(tmp_path):
+    root = tmp_path / "out"
+    file = write(root, "clip.png")
+    api, upload = FakeApi(), FakeUpload()
+    result = {"outputs": [{"path": str(file), "width": 1920, "height": 1080}]}
+    assert run_claim(api, upload, result, output_root=root) == "succeeded"
+    assert upload.calls[0][2]["x-media-width"] == "1920"
+    assert upload.calls[0][2]["x-media-height"] == "1080"
+    assert "x-media-duration-ms" not in upload.calls[0][2]
+
+
+def test_adapter_output_metadata_rejects_partial_dimensions(tmp_path):
+    root = tmp_path / "out"
+    file = write(root, "clip.png")
+    api, upload = FakeApi(), FakeUpload()
+    assert run_claim(api, upload, {"outputs": [{"path": str(file), "width": 1920}]}, output_root=root) == "failed"
+    assert_rejected(api, upload, "invalid_media_metadata")
+
+
+def test_adapter_output_metadata_rejects_boolean_or_out_of_range_values():
+    for metadata in ({"width": True, "height": 10}, {"width": 20000, "height": 10}):
+        with pytest.raises(media.MediaUploadError):
+            media.outputs_of({"outputs": [{"path": "clip.png", **metadata}]})

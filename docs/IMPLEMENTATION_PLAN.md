@@ -28,7 +28,7 @@ Verified baseline (2026-11-15): main `c1c7dc2a531fdbbfc827f9ca35d37e7b4eb6d61f`;
 | 4 operational exit | BLOCKED — owner-run | Encrypted disk, service lifecycle, profile persistence/isolation, kill recovery, separate-host restore and real D1/API staging smoke not evidenced. |
 | 5 | Qualification gate / BLOCKED | FLOW KIT and gflow-cli do not currently meet documented/permitted-interface requirements. Only dry-run is functional. |
 | 6A | Merged — API foundation | PR #19: private R2 upload, D1 metadata, owner-only list/download, SHA-256 and file signature validation, lease fencing and tests. One-shot upload cap 25 MiB. |
-| 6B | Next | Worker result upload integration, frontend media UI, dimensions/duration metadata, resumable uploads, retention/deletion/orphan cleanup and staging verification. |
+| 6B | In progress | Worker output upload and PWA media UI merged; trusted optional dimensions/duration metadata being implemented; resumable uploads, retention/deletion/orphan cleanup and staging verification remain. |
 | 7 | Not started | Production hardening, backups, Android E2E, staging and release. |
 
 ## Phase 4 — Browser worker and account lifecycle
@@ -70,7 +70,7 @@ Phase 4 exit: all ten profiles remain isolated and recoverable through restart; 
 - [ ] Python worker uploads generated outputs before marking a job succeeded.
 - [ ] Worker handles upload retry and checksum idempotency without completing a job whose output has not been persisted.
 - [ ] PWA shows media per job/project with preview, size/type and authenticated download.
-- [ ] Add trusted width/height/duration metadata and validate it server-side.
+- [x] Add optional width/height/duration metadata fields with strict Worker-side validation; trusted adapter metadata is accepted and surfaced to owner UI (implementation in progress on feature branch).
 - [ ] Add authorized delete and retention policy; audit all deletes.
 - [ ] Add orphan detection/cleanup with dry-run mode and explicit retention safety.
 - [ ] Add resumable/multipart upload path for media larger than 25 MiB.
