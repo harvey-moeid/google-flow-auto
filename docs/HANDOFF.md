@@ -7,16 +7,15 @@
 - Fixed constraints: manual enrollment and selection; one global sequential job; dry-run default; live adapters disabled; owner-controlled persistent browser host; no quota/rate-limit evasion, CAPTCHA/security challenge bypass, or undocumented/protected endpoints.
 
 ## Verified baseline — 2026-11-15
-- `main`: `c1c7dc2a531fdbbfc827f9ca35d37e7b4eb6d61f` — Phase 6A merged by PR #19.
-- PR #18 (documentation/handoff and Phase 5 qualification) merged at `4ec401cfcf8b51dd5f2f098f09cbbfe51412e24a`.
-- PR #19 (private R2 media upload/read API) merged at `c1c7dc2a531fdbbfc827f9ca35d37e7b4eb6d61f`.
-- PR #19 branch CI run #56 / ID `43683628688`: success (python-check and pwa-build).
-- Post-merge main CI run #57 / ID `43683700717`: success.
-- Open PRs: 0. Open issues: 0.
+- `main`: `4a3f9fd9505f7f98f091d0d46cff50f9a64458e4` — Phase 6B steps 1 and 2 merged (PR #21 `fda18325e38a62be7517c09b810f52e33f3540cf`, PR #22 `4a3f9fd9505f7f98f091d0d46cff50f9a64458e4`).
+- Post-merge main CI run ID `43684803312`: success (python-check and pwa-build).
+- PR #21 head `1fb8f2f8dca33e8b9598b56bb5df9c3a2fc46b10` CI run ID `43684544529`: success. PR #22 head `7edda3c44cdfc54a590427607449846c51fc510d` CI run ID `43684745426`: success.
+- Earlier baseline: Phase 6A merged by PR #19 (`c1c7dc2a531fdbbfc827f9ca35d37e7b4eb6d61f`); PR #18 (documentation and Phase 5 qualification) at `4ec401cfcf8b51dd5f2f098f09cbbfe51412e24a`; PR #20 handoff at `1b40336`.
 - Phase 4E encrypted local profile backup/restore is merged. Automated CI does not prove encrypted-volume use, real systemd operation, persistent Google sessions, or separate-host recovery.
 - Only `dry-run` is a verified functional engine. `flowkit` and `gflow` remain unapproved; live generation remains disabled.
 - Phase 6A API foundation is merged: D1 media metadata table, worker-only fenced R2 upload, SHA-256/MIME/signature/size validation, owner-only media listing/download, audit event and regression tests.
-- Upload is a one-request buffered path capped at 25 MiB to bound Worker memory use. Larger/resumable uploads, UI wiring, worker client integration, media deletion/retention/orphan cleanup and production R2/D1 verification remain future work.
+- Phase 6B step 1 (worker uploads outputs) and step 2 (PWA media panel) are merged. They are covered by CI only: the Python tests use fake transports, and the PWA panel has NOT been exercised in a real browser against a real Worker/R2.
+- Upload is a one-request buffered path capped at 25 MiB to bound Worker memory use. Larger/resumable uploads, media deletion/retention/orphan cleanup, media dimension/duration metadata and production R2/D1 verification remain future work.
 - Old branch `feat/phase-6a-r2-media` is stale/parked; do not merge it. The implemented replacement branch was `feat/phase-6a-private-r2-media`, merged via PR #19.
 - No production deployment or remote D1 migration was performed.
 
@@ -28,6 +27,7 @@
 - Keep dry-run as default and preserve the explicit live kill switch.
 - R2 must remain private. Media download is streamed through the owner-authenticated API; no public bucket URLs or unauthenticated links.
 - Upload requires worker bearer identity and the current running job's worker ID + fencing token. Metadata publication is guarded by the same live lease in D1.
+- Worker output files are uploaded only from `FLOW_OUTPUT_DIR` (symlinks resolved, `..` traversal rejected). With it unset, every output upload is refused.
 - Use feature branches and PRs; do not push directly to main.
 
 ## Session 10 — Phase 5 qualification (merged)
@@ -47,6 +47,21 @@
 - CI: run #56 success; post-merge main run #57 success.
 - Deployment and remote migration: NOT RUN.
 
+## Session 12 — Phase 6B step 1: worker uploads outputs (merged)
+- Branch: `feat/phase-6b-worker-media-upload`. PR: #21 (squash-merged as `fda18325e38a62be7517c09b810f52e33f3540cf`).
+- Files: `engine/worker/media.py` (new), `engine/worker/api_client.py`, `engine/worker/loop.py`, `engine/worker/main.py`, `engine/.env.example`, `engine/tests/test_worker_media.py` (new, 24 tests).
+- Adapter contract: `run()` may return a dict with `outputs: [path, ...]` (max 10). A result without `outputs` (dry-run) uploads nothing.
+- Outputs are uploaded before `complete`, with heartbeats and cancel handling kept running during the upload (`_supervise` in `loop.py`).
+- Failure semantics: transport error, 429 and 5xx are retried (3 attempts total) then `fail(media_upload_failed, retryable=true)`; other 4xx, bad path, unsupported type, empty, >25 MiB or unset `FLOW_OUTPUT_DIR` give `fail(<fixed code>, retryable=false)`; LeaseLost sends nothing further. A job is never reported complete without its media. Reports carry fixed codes only, never paths or file names.
+- Not verified: a real worker against a real Worker/R2/D1, and a real (non-dry-run) adapter producing outputs. `flowkit`/`gflow` remain unapproved.
+
+## Session 13 — Phase 6B step 2: PWA media panel (merged)
+- Branch: `feat/phase-6b-pwa-media-panel`. PR: #22 (squash-merged as `4a3f9fd9505f7f98f091d0d46cff50f9a64458e4`).
+- Files: `apps/pwa/src/screens/MediaPanel.tsx` (new), `apps/pwa/src/screens/Jobs.tsx`, `apps/pwa/src/api.ts`, `apps/pwa/public/_headers`.
+- The job screen lists media (kind, MIME, size) and offers Preview and Download on demand. Files are fetched with the owner session cookie and held only as in-memory object URLs (revoked on hide, job change, unmount).
+- CSP in `_headers` now allows `blob:` for `img-src` and `media-src`; no remote image/media origin is allowed.
+- Not verified: behavior in a real browser (preview of video/images, download, CSP not blocking `blob:`). The PWA has no component test harness.
+
 ## Owner-run Phase 4 verification — still BLOCKED / NOT RUN
 These require the owner's host, disk, accounts and Cloudflare environment; CI cannot prove them:
 - [ ] Confirm `FLOW_WORKER_DATA_DIR` is on an encrypted volume.
@@ -58,13 +73,13 @@ These require the owner's host, disk, accounts and Cloudflare environment; CI ca
 - [ ] Run staging smoke against real Worker API, D1 and worker token.
 - Do not mark Phase 4 operational exit complete until evidence is recorded.
 
-## Next work — Phase 6B
-1. Wire the Python worker result lifecycle to upload supported output files before calling worker complete; handle upload failure/retry without losing the job result.
-2. Add frontend media listing, preview and authenticated download controls.
+## Next work — Phase 6B (steps 1 and 2 done)
+1. DONE (PR #21): wire the Python worker result lifecycle to upload supported output files before worker complete; upload failure/retry does not lose the job result.
+2. DONE (PR #22): frontend media listing, preview and authenticated download controls.
 3. Add metadata needed by UI (dimensions/duration) with server-side extraction or trusted worker metadata validation.
 4. Design safe delete/retention/orphan cleanup and audit it; do not delete objects automatically until retention semantics are tested.
 5. Design resumable/multipart uploads for outputs above the 25 MiB one-shot cap.
-6. Add integration tests and staging smoke only after owner supplies/authorizes the configured Cloudflare environment.
+6. Add integration tests and staging smoke only after owner supplies/authorizes the configured Cloudflare environment. Include the manual browser check of the PWA media panel and the CSP `blob:` allowance.
 7. Preserve dry-run default and do not enable live engines.
 
 ## Session handoff template
