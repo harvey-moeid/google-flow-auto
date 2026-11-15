@@ -1,5 +1,7 @@
-import { asciiToB64url, b64urlToBytes } from "./encoding.ts";
 import { HttpError, jsonResponse, readJsonObject } from "./http.ts";
+import { isUniqueViolation, page, parsePagination } from "./paging.ts";
+import { jobRoutes } from "./job-routes.ts";
+import { projectRoutes } from "./project-routes.ts";
 import { ACTIVE_STATUSES } from "./queue.ts";
 import { auditIfChanged, auditStatement } from "./route-types.ts";
 import type { Ctx, Route } from "./route-types.ts";
@@ -18,60 +20,6 @@ import {
 } from "./validate.ts";
 
 export type { Ctx, Route } from "./route-types.ts";
-
-const DEFAULT_PAGE_SIZE = 50;
-const MAX_PAGE_SIZE = 100;
-
-// ---------- helpers ----------
-
-function encodeCursor(createdAt: string, id: string): string {
-  return asciiToB64url(JSON.stringify([createdAt, id]));
-}
-
-function decodeCursor(raw: string): [string, string] {
-  try {
-    const value = JSON.parse(new TextDecoder().decode(b64urlToBytes(raw)));
-    if (
-      Array.isArray(value) &&
-      value.length === 2 &&
-      value.every((part) => typeof part === "string" && part.length > 0 && part.length <= 64)
-    ) {
-      return [value[0], value[1]];
-    }
-  } catch {
-    // fall through
-  }
-  throw new HttpError(400, "validation_failed", "Request validation failed", {
-    issues: [{ field: "cursor", code: "invalid_value" }],
-  });
-}
-
-function parsePagination(url: URL): { limit: number; cursor: [string, string] | null } {
-  const issues = new Issues();
-  let limit = DEFAULT_PAGE_SIZE;
-  const rawLimit = url.searchParams.get("limit");
-  if (rawLimit !== null) {
-    if (!/^\d{1,3}$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > MAX_PAGE_SIZE) {
-      issues.add("limit", "out_of_range");
-    } else {
-      limit = Number(rawLimit);
-    }
-  }
-  issues.throwIfAny();
-  const rawCursor = url.searchParams.get("cursor");
-  return { limit, cursor: rawCursor === null ? null : decodeCursor(rawCursor) };
-}
-
-function page<T extends { created_at: string; id: string }>(rows: T[], limit: number) {
-  const hasMore = rows.length > limit;
-  const items = hasMore ? rows.slice(0, limit) : rows;
-  const last = items[items.length - 1];
-  return { items, next_cursor: hasMore && last ? encodeCursor(last.created_at, last.id) : null };
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return error instanceof Error && /UNIQUE constraint failed/i.test(error.message);
-}
 
 // ---------- handlers ----------
 
@@ -125,18 +73,6 @@ async function patchAccount(ctx: Ctx): Promise<Response> {
   return jsonResponse(row);
 }
 
-async function listProjects(ctx: Ctx): Promise<Response> {
-  const { limit, cursor } = parsePagination(ctx.url);
-  const columns = "SELECT id,name,aspect_ratio,status,created_at,updated_at FROM projects";
-  const statement = cursor
-    ? ctx.env.DB.prepare(
-        `${columns} WHERE (created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT ?`,
-      ).bind(cursor[0], cursor[0], cursor[1], limit + 1)
-    : ctx.env.DB.prepare(`${columns} ORDER BY created_at DESC, id DESC LIMIT ?`).bind(limit + 1);
-  const { results } = await statement.all<{ id: string; created_at: string }>();
-  return jsonResponse(page(results, limit));
-}
-
 async function createProject(ctx: Ctx): Promise<Response> {
   const body = await readJsonObject(ctx.req);
   const issues = new Issues();
@@ -158,6 +94,11 @@ async function listJobs(ctx: Ctx): Promise<Response> {
   const issues = new Issues();
   const rawStatus = ctx.url.searchParams.get("status");
   const status = rawStatus === null ? undefined : readEnum({ status: rawStatus }, "status", JOB_STATUSES, issues);
+  const rawProject = ctx.url.searchParams.get("project_id");
+  const projectId =
+    rawProject === null
+      ? undefined
+      : readString({ project_id: rawProject }, "project_id", { max: 36, pattern: UUID_RE }, issues);
   issues.throwIfAny();
 
   const conditions: string[] = [];
@@ -165,6 +106,10 @@ async function listJobs(ctx: Ctx): Promise<Response> {
   if (status) {
     conditions.push("j.status = ?");
     binds.push(status);
+  }
+  if (projectId) {
+    conditions.push("j.project_id = ?");
+    binds.push(projectId.toLowerCase());
   }
   if (cursor) {
     conditions.push("(j.created_at > ? OR (j.created_at = ? AND j.id > ?))");
@@ -174,9 +119,9 @@ async function listJobs(ctx: Ctx): Promise<Response> {
   // worker_id / lease_token are deliberately not exposed to the PWA.
   const { results } = await ctx.env.DB.prepare(
     `SELECT j.id,j.project_id,j.scene_id,j.account_id,j.engine,j.status,j.attempts,j.max_attempts,j.cancel_requested,
-            j.error_code,j.result_key,j.created_at,j.started_at,j.finished_at,
-            a.slot AS account_slot,a.label AS account_label
-       FROM jobs j JOIN accounts a ON a.id = j.account_id
+            j.error_code,j.result_key,j.retry_of,j.created_at,j.started_at,j.finished_at,
+            a.slot AS account_slot,a.label AS account_label,s.scene_order AS scene_order
+       FROM jobs j JOIN accounts a ON a.id = j.account_id LEFT JOIN scenes s ON s.id = j.scene_id
        ${where}
        ORDER BY j.created_at ASC, j.id ASC LIMIT ?`,
   )
@@ -395,7 +340,6 @@ const ownerRoutes: Route[] = [
   { method: "GET", pattern: /^\/api\/me$/, write: false, audience: "owner", handler: me },
   { method: "GET", pattern: /^\/api\/accounts$/, write: false, audience: "owner", handler: listAccounts },
   { method: "PATCH", pattern: ACCOUNT_PATH, write: true, audience: "owner", handler: patchAccount },
-  { method: "GET", pattern: /^\/api\/projects$/, write: false, audience: "owner", handler: listProjects },
   { method: "POST", pattern: /^\/api\/projects$/, write: true, audience: "owner", handler: createProject },
   { method: "GET", pattern: /^\/api\/jobs$/, write: false, audience: "owner", handler: listJobs },
   { method: "POST", pattern: /^\/api\/jobs$/, write: true, audience: "owner", handler: createJob },
@@ -404,4 +348,4 @@ const ownerRoutes: Route[] = [
   { method: "GET", pattern: /^\/api\/audit$/, write: false, audience: "owner", handler: listAudit },
 ];
 
-export const routes: Route[] = [...ownerRoutes, ...workerRoutes];
+export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...ownerRoutes, ...workerRoutes];
