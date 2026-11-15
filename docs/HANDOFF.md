@@ -7,15 +7,15 @@
 - Fixed constraints: manual enrollment and selection; one global sequential job; dry-run default; live adapters disabled; owner-controlled persistent browser host; no quota/rate-limit evasion, CAPTCHA/security challenge bypass, or undocumented/protected endpoints.
 
 ## Verified baseline — 2026-11-15
-- `main`: `67b3ab7671ab018a2579dd131fecbd665e3cdaca` — Phase 6B steps 1, 2 and 3 merged (PR #21 `fda18325e38a62be7517c09b810f52e33f3540cf`, PR #22 `4a3f9fd9505f7f98f091d0d46cff50f9a64458e4`, PR #24 included in `67b3ab7`).
-- Post-merge main CI run #69 / ID `43686179796`: success.
-- Open PR: #25 (Phase 6B step 4a, media delete). PR #23 (older handoff) is superseded by this document and should be closed without merging.
+- `main`: includes squash-merge of PR #25 (`a53cceed71b19b519f248fae39f570f7a527602e`) — Phase 6B steps 1, 2, 3 and 4a (media delete) merged (PR #21 `fda18325e38a62be7517c09b810f52e33f3540cf`, PR #22 `4a3f9fd9505f7f98f091d0d46cff50f9a64458e4`, PR #24 included in `67b3ab7`, PR #25 `a53cceed71b19b519f248fae39f570f7a527602e`).
+- PR #25 CI (head `ef24aeb81d0171094f77df2107a6854e9a1a367e`, run ID `43688486560`): success (pwa-build and python-check).
+- Open PR: #28 (Phase 6B step 4b, PWA delete control). Originally opened as #26 stacked on `feat/phase-6b-media-delete`; #26 auto-closed when that branch was deleted after #25 merged, so #28 reopens the same commit (`c7c21fb`) directly against `main`. PR #23 (older handoff) is superseded by this document.
 - Phase 4E encrypted local profile backup/restore is merged. Automated CI does not prove encrypted-volume use, real systemd operation, persistent Google sessions, or separate-host recovery.
 - Only `dry-run` is a verified functional engine. `flowkit` and `gflow` remain unapproved; live generation remains disabled.
 - Phase 6A/6B code is covered by CI only: Python tests use fake transports; the PWA media panel has NOT been exercised in a real browser against a real Worker/R2/D1.
-- Upload is a one-request buffered path capped at 25 MiB to bound Worker memory use. Resumable uploads, orphan detection/cleanup, retention policy, PWA delete control and production R2/D1 verification remain future work.
+- Upload is a one-request buffered path capped at 25 MiB to bound Worker memory use. Resumable uploads, orphan detection/cleanup, retention policy, and production R2/D1 verification remain future work. PWA delete control is in PR #28.
 - Old branch `feat/phase-6a-r2-media` is stale/parked; do not merge it.
-- No production deployment or remote D1 migration was performed. Migrations 0005 and 0006 exist in the repo but have not been applied to any remote D1.
+- `.github/workflows/deploy.yml` auto-deploys on any push to `main` touching `apps/api/**`, `cloudflare/**`, `package.json` or `package-lock.json` (no manual gate). PR #25's squash-merge (`a53cceed71b19b519f248fae39f570f7a527602e`) touched `apps/api/**` and triggered deploy run #17 (`43688531506`): "Apply D1 migrations" (`--remote`) and "Deploy Worker" both succeeded. So migrations 0005 and 0006, plus the media-delete route, ARE now applied/deployed to the configured remote D1/Worker. This happened automatically via existing CI, not via a manual deploy step, and is NOT yet reconciled with the "no production deploy without explicit authorization" invariant below — flag this to the owner.
 
 ## Security and product invariants
 - Never put Google passwords, cookies, browser profiles, session state, API secrets, or private assets in GitHub, D1, CI artifacts, issues, or chat.
@@ -63,13 +63,14 @@
 - Python adapter result stays backward-compatible with string paths and accepts records `{path,width,height,duration_ms}`. PWA shows dimensions/duration when supplied.
 - Metadata is trusted adapter/worker-supplied, not extracted from media bytes. Do not claim it is verified from the encoded file.
 
-## Session 15 — Phase 6B step 4a: owner-authorized media delete (PR #25 open)
-- Branch: `feat/phase-6b-media-delete`. PR #25 (open, not merged). Head `7d0425d9998918a137bfc30a8e45c6ac8ba9344d`.
+## Session 15 — Phase 6B step 4a: owner-authorized media delete (merged)
+- Branch: `feat/phase-6b-media-delete`. PR #25 squash-merged as `a53cceed71b19b519f248fae39f570f7a527602e`.
 - Files: `apps/api/src/media-delete.ts` (new), `apps/api/src/media-routes.ts` (registers the route), `apps/api/test/media-delete.test.ts` (new, 5 tests), `apps/api/test/auth.test.ts` (SAMPLES entry). No schema change; no migration.
 - Route: owner `POST /api/media/:mediaId/delete` (same action-route convention as job cancel/resume; no router, CORS or ALLOWED_METHODS change). Worker token gets 403, anonymous 401.
 - Semantics: one atomic D1 batch removes the `media` row and writes `media.deleted` (only if a row was removed). The R2 object is deleted AFTER that commit; success is audited as `media.object_deleted`, failure as `media.object_delete_failed` and the response reports `object_deleted:false` (an invisible orphan remains; cost only). Media of a job in `claimed`/`running` is refused with 409 `job_active`. Second delete or unknown id: 404 and no extra audit rows. R2 key is neither returned nor audited.
-- CI: first run #70 (ID `43686981610`) failed because the new route had no entry in `SAMPLES` (`auth.test.ts`); fixed in `7d0425d`. Run #71 / ID `43687106953`: success (pwa-build including API typecheck/tests, and python-check).
-- Not done: merge, PWA delete control, orphan detection, retention policy, deployment, remote D1 migration, real R2 verification.
+- CI: head `ef24aeb81d0171094f77df2107a6854e9a1a367e`, run ID `43688486560`: success (pwa-build including API typecheck/tests, and python-check).
+- Auto-deployed: the squash-merge commit touched `apps/api/**`, which triggered `deploy.yml` run #17 (`43688531506`) automatically — remote D1 migrations applied and Worker deployed. Not a manual/authorized deploy step; see the flag in "Verified baseline" above.
+- Not done: PWA delete control (PR #28, in review), orphan detection, retention policy, real R2 verification of the delete path.
 
 ## Owner-run Phase 4 verification — still BLOCKED / NOT RUN
 These require the owner's host, disk, accounts and Cloudflare environment; CI cannot prove them:
@@ -82,12 +83,12 @@ These require the owner's host, disk, accounts and Cloudflare environment; CI ca
 - [ ] Run staging smoke against real Worker API, D1 and worker token.
 - Do not mark Phase 4 operational exit complete until evidence is recorded.
 
-## Next work — Phase 6B (steps 1–3 merged, 4a in PR #25)
+## Next work — Phase 6B (steps 1–3 and 4a merged, 4b in PR #28)
 1. DONE (PR #21): worker uploads outputs before complete.
 2. DONE (PR #22): PWA media listing, preview and authenticated download.
 3. DONE (PR #24): trusted worker-supplied dimensions/duration.
-4a. IN REVIEW (PR #25): owner-authorized, audited media delete.
-4b. PWA delete control in `MediaPanel.tsx` with an explicit confirmation step; show the `object_deleted:false` case honestly.
+4a. DONE (PR #25): owner-authorized, audited media delete.
+4b. IN REVIEW (PR #28): PWA delete control in `MediaPanel.tsx` with an explicit confirmation step; shows the `object_deleted:false` case honestly.
 4c. Orphan detection as a dry-run report only. Open design question: R2 objects without a D1 row have no media id, and the API must not expose R2 keys. Decide on an identifier (for example a truncated hash of the key, or project/job/size/uploaded only) before implementing; do not add automatic deletion until retention semantics are agreed and tested.
 4d. Retention policy (owner decision required): manual-only deletion versus an age limit. Nothing is deleted automatically today.
 5. Design resumable/multipart uploads for outputs above the 25 MiB one-shot cap.
