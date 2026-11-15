@@ -45,6 +45,12 @@ export interface ClaimedJob {
   max_attempts: number;
   fencing_token: number;
   expires_at: number;
+  /** Project aspect ratio, e.g. "9:16". */
+  aspect_ratio: string;
+  /** Scene data. All null when the job has no scene (or the scene was deleted after queuing). */
+  scene_order: number | null;
+  scene_prompt: string | null;
+  scene_duration_seconds: number | null;
 }
 
 function detailJson(meta: AuditMeta, extra: Record<string, unknown> = {}): string {
@@ -176,8 +182,13 @@ export async function claimNext(
   return db
     .prepare(
       `SELECT j.id, j.project_id, j.scene_id, j.account_id, j.engine, j.attempts, j.max_attempts,
-              l.fencing_token, l.expires_at
-         FROM global_lease l JOIN jobs j ON j.id=l.job_id
+              l.fencing_token, l.expires_at,
+              p.aspect_ratio,
+              s.scene_order, s.prompt AS scene_prompt, s.duration_seconds AS scene_duration_seconds
+         FROM global_lease l
+         JOIN jobs j ON j.id=l.job_id
+         JOIN projects p ON p.id=j.project_id
+         LEFT JOIN scenes s ON s.id=j.scene_id
         WHERE l.name='global' AND l.holder_id=? AND j.worker_id=? AND j.lease_token=l.fencing_token`,
     )
     .bind(workerId, workerId)
