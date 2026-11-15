@@ -5,6 +5,7 @@ import { projectRoutes } from "./project-routes.ts";
 import { ACTIVE_STATUSES } from "./queue.ts";
 import { auditIfChanged, auditStatement } from "./route-types.ts";
 import type { Ctx, Route } from "./route-types.ts";
+import { workerHealthRoutes } from "./worker-health.ts";
 import { workerRoutes } from "./worker-routes.ts";
 import {
   ACCOUNT_ID_RE,
@@ -348,4 +349,4 @@ const ownerRoutes: Route[] = [
   { method: "GET", pattern: /^\/api\/audit$/, write: false, audience: "owner", handler: listAudit },
 ];
 
-export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...ownerRoutes, ...workerRoutes];
+export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...ownerRoutes, ...workerRoutes, ...workerHealthRoutes];
