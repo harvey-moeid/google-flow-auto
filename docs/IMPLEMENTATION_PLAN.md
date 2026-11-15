@@ -12,11 +12,11 @@
 - Browser execution: Python + Playwright on a trusted persistent host with encrypted storage. GitHub Actions is for CI/deploy, not persistent browser sessions.
 - Profiles: one isolated persistent profile per account slot; owner manually signs in. Never move profiles/cookies into GitHub, D1, CI artifacts, or logs.
 - Engines: adapter contract supports FLOW KIT and gflow-cli, but live adapters stay disabled until current interfaces, licenses, terms and reliability are verified.
-- Auth: Cloudflare Access/OIDC or equivalent server-verified identity. No privileged token in frontend build variables.
+- Auth: the Worker verifies identity itself. The owner signs in with a password (`OWNER_PASSWORD`) and receives a signed, expiring `HttpOnly` session cookie (`SESSION_SECRET`); the browser worker uses a bearer `WORKER_TOKEN` that is accepted only on `/api/worker/*`. Cloudflare Access/OIDC was the original plan and was implemented first (Phase 1), then replaced by this scheme (see `docs/HANDOFF.md`, Session 3). No privileged token in frontend build variables.
 - Platform policy: do not evade quotas/rate limits through account rotation; do not bypass CAPTCHA/security checks or use undocumented protected endpoints. Pause for manual reauthentication. If no permitted stable interface exists, ship manual-assisted mode and state the limitation.
 
 ## Baseline status and known gaps
-The repository currently has a basic PWA, Worker API, D1 bootstrap schema, Python Playwright profile isolation and in-process sequential scheduler, dry-run adapter, placeholder live adapters, deployment notes and basic CI.
+The repository originally had a basic PWA, Worker API, D1 bootstrap schema, Python Playwright profile isolation and in-process sequential scheduler, dry-run adapter, placeholder live adapters, deployment notes and basic CI. The gaps below describe that starting baseline; `docs/HANDOFF.md` records which phases have since addressed them.
 Known gaps:
 1. CI/build has not been proven green end-to-end.
 2. PWA uses a build-time bearer-token pattern; frontend secrets are public and must be removed.
@@ -42,7 +42,7 @@ Exit: clean checkout builds; CI green; dry-run passes without Google login; no c
 
 ### Phase 1 — Secure API and identity
 Tasks:
-- Choose Cloudflare Access/OIDC and define trusted identity claims.
+- Choose a server-verified identity scheme and define the trusted identity. (Cloudflare Access/OIDC was implemented first and later replaced by owner password + signed session cookie, with a separate worker bearer token.)
 - Verify identity and authorize every mutating endpoint at Worker boundary.
 - Remove VITE_API_TOKEN and all privileged browser-side secrets.
 - Configure strict origin allowlist, security headers, request limits, rate limits and request IDs.
@@ -114,7 +114,7 @@ Exit: security review has no unresolved critical/high findings; staging E2E, res
 
 ## Final acceptance checklist
 - [ ] PWA installs and normal control works from Android.
-- [ ] Production identity/auth works; no privileged secret in frontend. (Implemented and CI-tested in Phase 1, PR #4; not yet verified against a real Cloudflare Access staging deployment.)
+- [ ] Production identity/auth works; no privileged secret in frontend. (Owner password + signed session cookie and worker bearer token are implemented and CI-tested; not yet verified on a real Cloudflare staging deployment. See `docs/DEPLOY_ANDROID.md`.)
 - [ ] Ten account slots are manageable; manual enrollment and manual selection.
 - [ ] Ten isolated persistent profiles, safely stored and recoverable.
 - [ ] One global sequential lane survives worker restarts.

@@ -22,6 +22,7 @@ Read this document and `docs/IMPLEMENTATION_PLAN.md` before making changes.
 This is a scaffold, not a final or production-ready implementation. The plan file contains full phases and acceptance criteria.
 
 ## Critical known blockers
+This list is the original baseline. Items 2, 3, 4 and 6 were addressed in Phases 1–2 (see the session log below); the rest remain open.
 1. Run CI and inspect real workflow results before feature work.
 2. PWA currently uses build-time `VITE_API_TOKEN`; remove it. Frontend build variables are public.
 3. API CORS currently reflects the request origin; configure a strict allowlist.
@@ -85,6 +86,8 @@ At the end of each work session update:
 - Next concrete task: Phase 1 — Cloudflare Access/OIDC identity, remove `VITE_API_TOKEN`, strict CORS allowlist, input validation, rate limits.
 
 ### Session 2 — Phase 1 (secure API and identity)
+> **Superseded in part:** the Cloudflare Access design described below (JWT verification, `ALLOWED_EMAILS`, `CF_ACCESS_*`) was later replaced by an owner password with a signed session cookie and a worker bearer token (PRs #7/#8, see Session 3). The rest of this entry (origin allowlist, validation, rate limits, audit, secret scanning) still applies. Current auth is documented in `README.md` and `docs/DEPLOY_ANDROID.md`.
+
 - Current phase: Phase 1 implemented, CI green; pending merge of PR #4. Next is Phase 2.
 - Branch / PR / commits: `feat/phase-1-secure-api`, PR #4; `4d013dd` (API), `0e90b3b` (PWA), `f66ddff` (CI/scanner), `7b3a7c1` (docs), `13bf322` (fix `ignoreBOM` for real workers-types).
 - Design: Cloudflare Access is the identity provider. The Worker verifies `Cf-Access-Jwt-Assertion` itself (RS256, team JWKS cached 1h, refetch on unknown `kid` at most once/min, 24h stale tolerance; checks `iss`, `aud`, `exp`, `nbf`, `kid`) then requires the `email` claim in `ALLOWED_EMAILS` (a secret). Only `/health` is public. Config fails closed (503) on missing or `REPLACE_WITH_*` values. `workers_dev`/`preview_urls` disabled. Recommended topology: PWA and `/api/*` on one hostname (same-origin).
@@ -135,3 +138,12 @@ At the end of each work session update:
 - Blockers and decisions: unchanged (migration 0003 not yet applied to the real D1; README and `docs/DEPLOY_ANDROID.md` still describe Cloudflare Access).
 - Next concrete task: repeat the smoke with `wrangler dev` + `--once` on a machine with network (real httpx and miniflare D1); then Phase 4 host/profile work (enrollment flow, readiness and reauth detection feeding `AuthRequired`).
 
+### Session 6 — Docs refresh (Access replaced by password + worker token)
+- Current phase: documentation only; no behaviour changed (the only code edit is a header comment in `apps/api/src/worker-routes.ts`).
+- Branch / PR: `docs/fix-auth-docs`, PR #12.
+- Files changed: `README.md`, `docs/DEPLOY_ANDROID.md` (security model, setup, verification checklist, local dev, operations notes, worker section rewritten for `OWNER_PASSWORD` / `SESSION_SECRET` / `WORKER_TOKEN`), `docs/IMPLEMENTATION_PLAN.md` (auth decision, Phase 1 task, acceptance checklist), `docs/HANDOFF.md` (this entry, superseded note on Session 2, scope note on the blockers list), `apps/api/src/worker-routes.ts` (comment no longer mentions an Access service token or `ALLOWED_SERVICE_TOKENS`).
+- Tests run and exact results: none (docs and a comment only). The new text was written from reading `apps/api/src/{auth,config,index,routes}.ts`, `apps/api/wrangler.toml`, `apps/api/.dev.vars.example`, `apps/pwa/src/api.ts`, `engine/worker/{api_client,main}.py` and `engine/.env.example`; none of it was executed.
+- Deployment/staging status: none.
+- Security review: no secrets added; docs only describe secret names, never values.
+- Blockers and decisions: unchanged. Not changed here: `docs/QUEUE_PROTOCOL.md` is referenced by the `worker-routes.ts` comment but was not found in `docs/`; the baseline sections ("Current code baseline", the original gap list in the plan) were annotated rather than rewritten.
+- Next concrete task: unchanged from Session 5.
