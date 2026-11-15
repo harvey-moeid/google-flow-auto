@@ -38,7 +38,7 @@ This is a scaffold, not a final or production-ready implementation. The plan fil
 Phase 3A (API + PWA for projects, scenes, review/submit, job detail, retry) is implemented. Still open in Phase 3:
 - Private R2 upload of reference assets and the output gallery (also needs Phase 6 download URLs).
 - Scene reference assets and per-scene aspect-ratio/duration limits once Phase 5 verifies real engine limits (current 1-60 s is a generic bound).
-- Worker claim payload must also carry the scene prompt/duration and project aspect ratio; today it only returns ids (needed before Phase 4/5 workers can run anything real).
+- ~~Worker claim payload must also carry the scene prompt/duration and project aspect ratio~~ Done in Session 4 (PR #10). Still open: the Python `engine/` worker does not call the API or consume these fields yet (Phase 4).
 - PWA screens were type-checked and built but never exercised in a real browser or on Android; add an Android Chrome check (Phase 7 E2E).
 - Keep live adapters disabled.
 
@@ -108,3 +108,15 @@ At the end of each work session update:
 - Security review: no secrets added; audit rows store field names and ids, never prompt text; the timeline exposes only allow-listed audit keys.
 - Blockers and decisions: delete is a POST action so the method allow-list stays GET/POST/PATCH; scene gaps after delete are allowed (reorder renumbers 1..N); the unverified real limits of Google Flow remain unverified.
 - Next concrete task: apply migration 0003 to the real D1, merge the Phase 3A PR after CI, then Phase 3B (worker claim payload with scene data, R2 asset upload, gallery).
+
+### Session 4 — Phase 3B part 1 (worker claim payload)
+- Current phase: Phase 3B in progress. Done: claim payload. Not started: R2 reference assets, output gallery, per-scene limits from a verified engine.
+- State found at start: `main` at `b7f187b` (PR #9 / Phase 3A merged); `Test` run 43666181385 on `main` = success.
+- Branch / PR / commits: `feat/phase-3b-claim-payload`, PR #10; `ff45bc3`.
+- Files changed: `apps/api/src/queue.ts` (claim SELECT now joins `projects` and `LEFT JOIN scenes`), `apps/api/src/worker-routes.ts` (response adds `job.aspect_ratio` and `job.scene {id,order,prompt,duration_seconds}`), `apps/api/test/claim-payload.test.ts` (new). No migration, no schema change, no lease/fencing logic touched.
+- Contract: `job.scene` is `null` when the job has no scene (direct `POST /api/jobs`) or the scene row was deleted after queuing. A worker must fail such a job as non-retryable and must not invent a prompt.
+- Tests run and exact results: local (Node 22.23, no npm install) 101/101 pass (95 existing + 6 new). With the old `queue.ts`/`worker-routes.ts` restored, 5 of the 6 new tests fail (the empty-queue test passes by design). GitHub Actions `Test` run 43666660597 on `ff45bc3` = success (includes typecheck, which was not run locally because workers-types could not be installed offline).
+- Deployment/staging status: none.
+- Security review: the claim response is worker-token only and exposes exactly the allow-listed keys (asserted by test); the prompt is user content sent only to the authenticated worker. Audit rows still hold no prompt text.
+- Blockers and decisions: unchanged. Migration 0003 must still be applied to the real D1 by the owner. `README.md` and `docs/DEPLOY_ANDROID.md` still describe Cloudflare Access (stale since PRs #7/#8).
+- Next concrete task: Phase 3B R2 reference-asset upload (needs the `MEDIA` bucket binding and size/MIME rules), or Phase 4 so the Python worker actually calls `/api/worker/claim`; fix the stale README/DEPLOY docs when touching deployment.
