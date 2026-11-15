@@ -66,7 +66,7 @@ def _decrypt_file(source: Path, destination: Path, passphrase: str) -> None:
         src.seek(header_size)
         decryptor = Cipher(algorithms.AES(_key(passphrase, salt)), modes.GCM(nonce, tag)).decryptor()
         decryptor.authenticate_additional_data(header)
-        with destination.open("xb") as dst:
+        with destination.open("wb") as dst:
             os.chmod(destination, 0o600)
             while remaining:
                 chunk = src.read(min(CHUNK_BYTES, remaining))
@@ -204,6 +204,8 @@ def restore_backup(data_dir: str | Path, backup_path: str | Path, passphrase: st
             destination.rmdir()
         os.replace(staged_profiles, destination)
         return {"ok": True, "operation": "restore", "slots": audit(data_dir).checked}
+    except ProfileBackupError:
+        raise
     except (zipfile.BadZipFile, RuntimeError, OSError):
         raise ProfileBackupError("Backup archive is invalid or could not be restored") from None
     finally:
