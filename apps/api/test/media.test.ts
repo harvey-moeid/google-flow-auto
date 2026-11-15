@@ -75,7 +75,7 @@ test("worker uploads verified media to private R2 and owner can list/download it
   );
   assert.equal(downloadResponse.status, 200);
   assert.equal(downloadResponse.headers.get("content-type"), "image/png");
-  assert.equal(downloadResponse.headers.get("cache-control"), "private, no-store, max-age=0");
+  assert.equal(downloadResponse.headers.get("cache-control"), "no-store", "global response finalizer enforces no-store");
   assert.deepEqual(new Uint8Array(await downloadResponse.arrayBuffer()), PNG);
 });
 
