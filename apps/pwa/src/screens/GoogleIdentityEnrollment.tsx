@@ -23,7 +23,7 @@ function loadSdk(): Promise<void> {
  });
  return sdkPromise;
 }
-export function GoogleIdentityEnrollment({ account }: { account: Account }) {
+export function GoogleIdentityEnrollment({ account, onChanged }: { account: Account; onChanged?: () => void }) {
  const button = useRef<HTMLDivElement>(null);
  const [challenge, setChallenge] = useState<Challenge | null>(null);
  const [busy, setBusy] = useState(false);
@@ -46,7 +46,7 @@ export function GoogleIdentityEnrollment({ account }: { account: Account }) {
   try {
    const result = await post<{ email: string; verified_at: string }>(`/api/accounts/${account.id}/google-identity/verify`, { challenge_id: challenge.challenge_id, credential: response.credential });
    setEmail(result.email); setVerifiedAt(result.verified_at); setChallenge(null);
-   setNotice("Identitas Google terverifikasi. Sesi Google Flow belum terhubung."); window.google?.accounts.id.cancel();
+   setNotice("Identitas Google terverifikasi. Sesi Google Flow belum terhubung."); window.google?.accounts.id.cancel(); onChanged?.();
   } catch (reason) { setError(describeError(reason)); } finally { setBusy(false); }
  }
  async function start() {
@@ -57,7 +57,7 @@ export function GoogleIdentityEnrollment({ account }: { account: Account }) {
  async function unlink() {
   if (!window.confirm("Putuskan tautan identitas Google dari slot ini?")) return;
   setBusy(true); setError("");
-  try { await post(`/api/accounts/${account.id}/google-identity/unlink`, { confirm: true }); setEmail(null); setVerifiedAt(null); setNotice("Identitas berhasil diputuskan dari slot."); }
+  try { await post(`/api/accounts/${account.id}/google-identity/unlink`, { confirm: true }); setEmail(null); setVerifiedAt(null); setNotice("Identitas berhasil diputuskan dari slot."); onChanged?.(); }
   catch (reason) { setError(describeError(reason)); } finally { setBusy(false); }
  }
  return <section className="panel">

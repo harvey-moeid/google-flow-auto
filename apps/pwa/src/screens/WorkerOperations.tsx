@@ -11,7 +11,7 @@ function formatBytes(value: number | null): string {
 function formatTime(value: string): string {
  const date = new Date(value); return Number.isNaN(date.getTime()) ? "Waktu tidak diketahui" : date.toLocaleString("id-ID", { hour12: false });
 }
-export function WorkerOperations({ account }: { account: Account }) {
+export function WorkerOperations({ account, onChanged }: { account: Account; onChanged?: () => void }) {
  const [workers,setWorkers] = useState<WorkerStatus[]>([]); const [error,setError] = useState(""); const [loading,setLoading] = useState(true);
  const refresh = useCallback(async () => {
   try { const result = await api<{items:WorkerStatus[]}>("/api/workers"); setWorkers(result.items); setError(""); }
@@ -30,6 +30,6 @@ export function WorkerOperations({ account }: { account: Account }) {
     <div className="worker-meta"><span><HardDrive size={13}/> {formatBytes(w.disk_free_bytes)} kosong / {formatBytes(w.disk_total_bytes)}</span><span className={w.disk_low?"worker-warning":""}>{w.disk_free_bytes===null?"Disk tidak diketahui":w.disk_low?"Disk rendah":"Disk normal"}</span></div><small className="muted">Heartbeat: {formatTime(w.last_seen_at)}</small></article>)}
    {error ? <div className="notice warn">{error}</div> : null}<p>Worker status hanya observasional.</p>
   </section>
-  <GoogleIdentityEnrollment account={account}/>
+  <GoogleIdentityEnrollment account={account} onChanged={onChanged}/>
  </>;
 }

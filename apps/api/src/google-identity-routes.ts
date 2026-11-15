@@ -49,11 +49,11 @@ async function verifyToken(token: string, clientId: string, nonceHash: string, n
  const nowS = Math.floor(now / 1000); const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
  const emailVerified = claims.email_verified === true || claims.email_verified === "true";
  if (!signatureOk || typeof claims.iss !== "string" || !ISSUERS.has(claims.iss) ||
-  !aud.includes(clientId) || (Array.isArray(claims.aud) && claims.azp !== clientId) ||
+  !aud.includes(clientId) || (claims.azp !== undefined && claims.azp !== clientId) ||
   typeof claims.exp !== "number" || claims.exp <= nowS ||
-  typeof claims.iat !== "number" || claims.iat > nowS + 60 ||
+  typeof claims.iat !== "number" || claims.iat > nowS + 60 || claims.iat < nowS - 3600 ||
   typeof claims.sub !== "string" || !claims.sub || claims.sub.length > 255 ||
-  typeof claims.email !== "string" || claims.email.length > 254 || !emailVerified ||
+  typeof claims.email !== "string" || claims.email.length > 254 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(claims.email) || !emailVerified ||
   typeof claims.nonce !== "string" || await hash(claims.nonce) !== nonceHash) {
   throw new HttpError(401, "google_token_invalid", "Google identity token is invalid or does not match this enrollment");
  }
@@ -67,7 +67,7 @@ async function challenge(ctx: Ctx): Promise<Response> {
  if (!exists) throw new HttpError(404, "account_not_found", "Account not found");
  const nonce = nonceValue(); const nonceHash = await hash(nonce); const id = crypto.randomUUID(); const now = ctx.now();
  await ctx.env.DB.batch([
-  ctx.env.DB.prepare("DELETE FROM account_enrollment_challenges WHERE account_id=? AND consumed_at IS NULL AND expires_at<=datetime(?/1000,'unixepoch')").bind(accountId, now),
+  ctx.env.DB.prepare("DELETE FROM account_enrollment_challenges WHERE account_id=? AND consumed_at IS NULL").bind(accountId),
   ctx.env.DB.prepare("INSERT INTO account_enrollment_challenges(id,account_id,nonce_hash,expires_at) VALUES(?,?,?,datetime(?/1000,'unixepoch'))").bind(id, accountId, nonceHash, now + TTL),
   auditStatement(ctx, "account.google_identity.challenge_created", { account_id: accountId }, {}),
  ]);

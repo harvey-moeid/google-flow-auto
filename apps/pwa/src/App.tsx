@@ -222,7 +222,7 @@ export default function App() {
             </button>
           ))}
         </nav>
-        {tab === "Accounts" ? <WorkerOperations account={selectedAccount} /> : null}
+        {tab === "Accounts" ? <WorkerOperations account={selectedAccount} onChanged={() => void refresh()} /> : null}
         {tab === "Dashboard" || tab === "Accounts" ? (
           <section className="panel">
             <h2>

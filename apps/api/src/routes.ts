@@ -34,7 +34,7 @@ async function me(ctx: Ctx): Promise<Response> {
 
 async function listAccounts(ctx: Ctx): Promise<Response> {
   const { results } = await ctx.env.DB.prepare(
-    "SELECT id,slot,label,email,status,last_login_at,last_used_at,last_error FROM accounts ORDER BY slot",
+    `SELECT a.id,a.slot,a.label,a.email,a.status,a.last_login_at,a.last_used_at,a.last_error,g.verified_at AS google_identity_verified_at FROM accounts a LEFT JOIN account_google_identities g ON g.account_id=a.id ORDER BY a.slot`,
   ).all();
   return jsonResponse({ items: results });
 }
