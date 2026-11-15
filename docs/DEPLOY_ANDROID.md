@@ -50,13 +50,26 @@ There is no Cloudflare Access in front of the app. The Worker authenticates ever
   and a wrong bearer value returns `401`. An owner session cookie on `/api/worker/claim` returns `403 forbidden`.
 - `https://google-flow-auto-api.<account>.workers.dev` is unreachable (`workers_dev = false`).
 - Rapid repeated writes return `429` with `Retry-After`.
-- `GET /api/audit` shows events such as `account.updated` / `project.created` / `job.queued` / `job.cancelled`.
+- `GET /api/audit` shows events such as `account.updated` / `project.created` / `job.queued` / `job.cancelled` / `asset.uploaded` / `asset.deleted`.
+- Reference images: upload a small PNG to a scene (`201`, an object appears under `assets/<project>/<scene>/` in the bucket), `GET /api/assets/:id/content` returns the same bytes with `Content-Type: image/png`,
+  uploading an SVG or a file whose content does not match its type is refused, and deleting the scene removes the object from the bucket.
 
 ## Local development
 1. `cp apps/api/.dev.vars.example apps/api/.dev.vars` (gitignored). It sets `APP_ENV=development`, a dev `OWNER_PASSWORD` and `SESSION_SECRET`, and `ALLOWED_ORIGINS=http://localhost:5173`.
    `APP_ENV=development` only makes the rate-limit bindings optional; it does not weaken authentication. Uncomment `WORKER_TOKEN` there to enable `/api/worker/*` for a local worker.
 2. `cd apps/api && npm run dev` (Worker on `http://127.0.0.1:8787`) and `cd apps/pwa && npm run dev` (Vite on `http://localhost:5173`, proxying `/api` to the Worker). Sign in with the `OWNER_PASSWORD` from `.dev.vars`.
 3. Checks: `npm run check` from the repository root (typecheck, API tests, script tests, PWA build, secret scan).
+
+## Reference images (scene assets)
+Each scene can hold up to 3 reference images (PNG, JPEG or WebP, at most 5 MiB each). They are stored in the private `MEDIA` R2 bucket; there is no public or signed URL.
+Migration `0004_scene_assets.sql` creates the `scene_assets` table, so `wrangler d1 migrations apply` must be run again after updating. The `MEDIA` binding in `wrangler.toml` must point at your bucket.
+
+- `POST /api/scenes/:id/assets`: raw image bytes with `Content-Type: image/png|image/jpeg|image/webp`, optional `?name=` label. The content is checked against the type by its first bytes (SVG and GIF are refused), a SHA-256 is stored, and the object key is built by the server.
+- `GET /api/scenes/:id/assets`: metadata list (the storage key is never returned).
+- `GET /api/assets/:id/content`: the image, streamed through the Worker for the signed-in owner only. The worker token cannot read it yet.
+- `POST /api/assets/:id/delete`: removes the row and the object.
+- Uploads and deletes are refused (`409`) for archived projects and for scenes with a queued, claimed, running or waiting job, like any other scene edit. Deleting a scene also deletes its objects.
+- If an object cannot be deleted from R2, the row is still removed and the object stays as an unreferenced orphan until the Phase 6 cleanup job exists.
 
 ## Operations notes
 - API errors use one shape: `{"error":{"code","message","request_id","details?"}}`; every response carries `x-request-id`.
@@ -77,7 +90,7 @@ Keep the token on the worker host only; never commit it or put it in GitHub. Onl
 - A tested and permitted Google Flow adapter.
 - The durable queue lease with fencing tokens exists, but it has only been exercised against SQLite standing in for D1 (see `docs/HANDOFF.md`, Sessions 2 and 5); verify it on real D1 and with `wrangler dev` plus `python -m worker.main --once`.
 - Secure manual enrollment and profile backup lifecycle.
-- Private R2 upload and signed download URLs.
+- Private R2 storage for generated outputs and signed or expiring download URLs. (Reference images for scenes can be uploaded and read by the owner, but the worker cannot fetch them yet, and the bucket path has only been exercised against an in-memory stand-in.)
 - Real Cloudflare resource IDs and secrets, and a verified staging deployment.
 
 GitHub-hosted runners are ephemeral and are not a persistent interactive browser. Do not upload browser profiles or credentials to GitHub.

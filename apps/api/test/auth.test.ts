@@ -55,6 +55,10 @@ const SAMPLES: Array<{ method: string; path: string; body?: unknown }> = [
   },
   { method: "PATCH", path: `/api/scenes/${UUID}`, body: { prompt: "hack" } },
   { method: "POST", path: `/api/scenes/${UUID}/delete` },
+  { method: "POST", path: `/api/scenes/${UUID}/assets` },
+  { method: "GET", path: `/api/scenes/${UUID}/assets` },
+  { method: "GET", path: `/api/assets/${UUID}/content` },
+  { method: "POST", path: `/api/assets/${UUID}/delete` },
   { method: "GET", path: `/api/jobs/${UUID}` },
   { method: "POST", path: `/api/jobs/${UUID}/retry`, body: { idempotency_key: "hack-attempt-0001" } },
   // Worker (bearer token) routes.

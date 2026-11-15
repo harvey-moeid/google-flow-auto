@@ -64,6 +64,40 @@ export function createD1() {
 
 export type TestDb = ReturnType<typeof createD1>;
 
+/** In-memory stand-in for the R2 bucket binding (only what the API uses), with switches to inject faults. */
+export function createFakeBucket() {
+  const objects = new Map<string, { bytes: Uint8Array; contentType?: string; customMetadata?: Record<string, string> }>();
+  const faults = { failPut: false, failDelete: false };
+  return {
+    objects,
+    faults,
+    async put(
+      key: string,
+      value: Uint8Array,
+      options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> },
+    ) {
+      if (faults.failPut) throw new Error("r2 put failed");
+      objects.set(key, {
+        bytes: new Uint8Array(value),
+        contentType: options?.httpMetadata?.contentType,
+        customMetadata: options?.customMetadata,
+      });
+      return { key };
+    },
+    async get(key: string) {
+      const found = objects.get(key);
+      if (!found) return null;
+      return { body: new Blob([found.bytes]).stream(), size: found.bytes.byteLength };
+    },
+    async delete(key: string) {
+      if (faults.failDelete) throw new Error("r2 delete failed");
+      objects.delete(key);
+    },
+  };
+}
+
+export type FakeBucket = ReturnType<typeof createFakeBucket>;
+
 export function count(db: TestDb, table: string): number {
   return Number((db.raw.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c);
 }
@@ -76,6 +110,7 @@ export interface Harness {
   app: ReturnType<typeof createApp>;
   env: Record<string, unknown>;
   db: TestDb;
+  bucket: FakeBucket;
   clock: { now: number };
   limiter: {
     read: string[];
@@ -94,6 +129,7 @@ export interface Harness {
 
 export async function createHarness(envOverrides: Record<string, unknown> = {}): Promise<Harness> {
   const db = createD1();
+  const bucket = createFakeBucket();
   const clock = { now: Date.parse("2026-11-14T00:00:00Z") };
   const limiter = {
     read: [] as string[],
@@ -125,7 +161,7 @@ export async function createHarness(envOverrides: Record<string, unknown> = {}):
 
   const env = {
     DB: db,
-    MEDIA: {},
+    MEDIA: bucket,
     APP_ENV: "production",
     OWNER_PASSWORD,
     SESSION_SECRET,
@@ -142,6 +178,7 @@ export async function createHarness(envOverrides: Record<string, unknown> = {}):
     app,
     env,
     db,
+    bucket,
     clock,
     limiter,
     session: async (options = {}) =>

@@ -84,6 +84,41 @@ export function enforceOrigin(req: Request, url: URL, cfg: AppConfig): void {
   }
 }
 
+/**
+ * Reads a raw body with a hard size cap. The cap is enforced twice: against the declared
+ * Content-Length (so an oversized upload is refused before it is read) and while streaming (so a
+ * missing or lying Content-Length cannot get past it).
+ */
+export async function readBytes(req: Request, maxBytes: number): Promise<Uint8Array> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null && Number(declared) > maxBytes) {
+    throw new HttpError(413, "payload_too_large", "Request body is too large", { max_bytes: maxBytes });
+  }
+  if (!req.body) throw new HttpError(400, "empty_body", "Request body is empty");
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      await reader.cancel();
+      throw new HttpError(413, "payload_too_large", "Request body is too large", { max_bytes: maxBytes });
+    }
+    chunks.push(value);
+  }
+  if (received === 0) throw new HttpError(400, "empty_body", "Request body is empty");
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 /** Reads a size-capped JSON object body. */
 export async function readJsonObject(req: Request, maxBytes = MAX_BODY_BYTES): Promise<Record<string, unknown>> {
   const contentType = req.headers.get("content-type") ?? "";
