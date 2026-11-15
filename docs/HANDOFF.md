@@ -67,6 +67,17 @@ These require the owner's host, disk, accounts and Cloudflare environment; CI ca
 6. Add integration tests and staging smoke only after owner supplies/authorizes the configured Cloudflare environment.
 7. Preserve dry-run default and do not enable live engines.
 
+## Session 14 — Phase 6B step 3: media metadata (PR open)
+- Branch: `feat/phase-6b-media-metadata`. PR #24: https://github.com/harvey-moeid/google-flow-auto/pull/24 (open; not merged).
+- Latest commit: `736b63b56f708b33edf5e17fbdceabc69b1dded0`.
+- Additive migration: `cloudflare/migrations/0006_media_metadata.sql` adds nullable width/height/duration_ms with bounds; old media rows remain valid.
+- API validates optional worker headers (paired dimensions, max 16384 each, duration 1..86400000 ms; image duration rejected), stores metadata with D1 and includes it in owner listing/upload responses. Idempotent checksum replay also requires metadata to match.
+- Python adapter result remains backward-compatible with string paths and accepts records `{path,width,height,duration_ms}`; worker validates fields and forwards metadata. Video may include dimensions + duration; images may include dimensions only.
+- PWA media panel displays dimensions and duration when supplied. Missing metadata remains explicitly absent.
+- Metadata is trusted adapter/worker-supplied, not independently extracted from media bytes. Do not claim it is verified from the encoded file.
+- CI run #66 / run ID `43685537736`: success. Both `pwa-build` (API typecheck/tests, script tests, PWA build, secret scan) and `python-check` (compileall, pytest, dry-run smoke) passed.
+- No merge, remote D1 migration, R2/Worker deployment, or real-browser test performed.
+
 ## Session handoff template
 - Current phase / gate:
 - Branch / PR / commit:
