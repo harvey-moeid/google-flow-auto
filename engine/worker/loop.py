@@ -10,6 +10,7 @@ Rules this module enforces (see apps/api/src/queue.ts for the server side):
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Callable
 
 from adapters.base import AuthRequired, EngineNotConfigured
@@ -101,6 +102,16 @@ async def _sleep(stop: asyncio.Event, seconds: float) -> None:
         pass
 
 
+async def _report_status(client: WorkerApiClient, provider, state: str, log: Callable[[str], None]) -> None:
+    """Best-effort process heartbeat. A failure here must never affect a job, so only the class name is logged."""
+    if provider is None:
+        return
+    try:
+        await client.report_status(**provider(state))
+    except Exception as exc:
+        log(f"status report failed: {type(exc).__name__}")
+
+
 async def serve(
     client: WorkerApiClient,
     scheduler,
@@ -112,28 +123,44 @@ async def serve(
     heartbeat_interval: float = 20.0,
     lease_seconds: int = 60,
     log: Callable[[str], None] = print,
+    status_provider: Callable[[str], dict] | None = None,
+    status_interval: float = 30.0,
+    clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    """Polls the queue until `stop` is set. A job in progress is always finished (or reported) first."""
+    """Polls the queue until `stop` is set. A job in progress is always finished (or reported) first.
+
+    `status_provider(state)` returns the keyword arguments of WorkerApiClient.report_status; when given,
+    the worker reports idle every `status_interval` seconds, busy while a job runs and stopping on exit.
+    """
     backoff = 1.0
-    while not stop.is_set():
-        try:
-            claim = await client.claim(lease_seconds)
-        except Exception as exc:
-            if once:
-                raise
-            log(f"claim failed: {type(exc).__name__}; retrying in {backoff:.0f}s")
-            await _sleep(stop, backoff)
-            backoff = min(backoff * 2, max_backoff)
-            continue
-        backoff = 1.0
-        if claim is None:
+    last_report = float("-inf")
+    try:
+        while not stop.is_set():
+            if clock() - last_report >= status_interval:
+                await _report_status(client, status_provider, "idle", log)
+                last_report = clock()
+            try:
+                claim = await client.claim(lease_seconds)
+            except Exception as exc:
+                if once:
+                    raise
+                log(f"claim failed: {type(exc).__name__}; retrying in {backoff:.0f}s")
+                await _sleep(stop, backoff)
+                backoff = min(backoff * 2, max_backoff)
+                continue
+            backoff = 1.0
+            if claim is None:
+                if once:
+                    return
+                await _sleep(stop, poll_interval)
+                continue
+            await _report_status(client, status_provider, "busy", log)
+            outcome = await process_claim(
+                client, scheduler, claim, heartbeat_interval=heartbeat_interval, lease_seconds=lease_seconds
+            )
+            log(f"job {claim.job['id']}: {outcome}")
+            last_report = float("-inf")  # report idle again on the next iteration
             if once:
                 return
-            await _sleep(stop, poll_interval)
-            continue
-        outcome = await process_claim(
-            client, scheduler, claim, heartbeat_interval=heartbeat_interval, lease_seconds=lease_seconds
-        )
-        log(f"job {claim.job['id']}: {outcome}")
-        if once:
-            return
+    finally:
+        await _report_status(client, status_provider, "stopping", log)
