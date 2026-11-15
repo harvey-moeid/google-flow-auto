@@ -1,9 +1,10 @@
 """Client for the worker-facing queue API (/api/worker/*).
 
-The wire protocol is defined by apps/api/src/worker-routes.ts. Every job-scoped call presents the
-(worker_id, fencing_token) issued by /claim; the server rejects stale ones with 409 lease_lost.
+The wire protocol is defined by apps/api/src/worker-routes.ts (queue) and apps/api/src/media-routes.ts
+(media upload). Every job-scoped call presents the (worker_id, fencing_token) issued by /claim; the server
+rejects stale ones with 409 lease_lost.
 
-The transport is injectable so the protocol can be tested without a network. The real transport
+The transports are injectable so the protocol can be tested without a network. The real transport
 (HttpxTransport) imports httpx lazily and never logs or echoes the bearer token.
 """
 from __future__ import annotations
@@ -19,6 +20,8 @@ WORKER_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 # (path, json body) -> (http status, parsed json body or None)
 Transport = Callable[[str, dict], Awaitable[tuple[int, Any]]]
+# (path, raw bytes, headers) -> (http status, parsed json body or None)
+UploadTransport = Callable[[str, bytes, dict], Awaitable[tuple[int, Any]]]
 
 
 class ApiError(Exception):
@@ -54,11 +57,12 @@ def validate_api_base_url(url: str) -> str:
 
 
 class HttpxTransport:
-    def __init__(self, base_url: str, token: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, token: str, timeout: float = 30.0, upload_timeout: float = 180.0):
         import httpx  # lazy: only the real worker needs it
 
         if not token:
             raise ValueError("WORKER_TOKEN is required")
+        self._upload_timeout = upload_timeout
         self._client = httpx.AsyncClient(
             base_url=validate_api_base_url(base_url),
             headers={"authorization": f"Bearer {token}"},
@@ -73,19 +77,33 @@ class HttpxTransport:
             data = None
         return response.status_code, data
 
+    async def post_bytes(self, path: str, data: bytes, headers: dict) -> tuple[int, Any]:
+        """Raw-body POST for media upload. Uses a longer timeout; the bearer header comes from the client."""
+        response = await self._client.post(path, content=data, headers=headers, timeout=self._upload_timeout)
+        try:
+            parsed = response.json()
+        except ValueError:
+            parsed = None
+        return response.status_code, parsed
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
 
 class WorkerApiClient:
-    def __init__(self, transport: Transport, worker_id: str):
+    def __init__(self, transport: Transport, worker_id: str, upload_transport: UploadTransport | None = None):
         if not WORKER_ID_RE.match(worker_id):
             raise ValueError("worker_id must match [A-Za-z0-9._:-] and be 1-64 characters")
         self._transport = transport
+        self._upload_transport = upload_transport
         self.worker_id = worker_id
 
-    async def _post(self, path: str, body: dict) -> Any:
-        status, data = await self._transport(path, body)
+    @property
+    def can_upload(self) -> bool:
+        return self._upload_transport is not None
+
+    @staticmethod
+    def _check(status: int, data: Any) -> Any:
         if 200 <= status < 300:
             return data
         code = "unknown_error"
@@ -98,6 +116,10 @@ class WorkerApiClient:
         if status == 409 and code == "cancel_requested":
             raise CancelRequested(status, code)
         raise ApiError(status, code)
+
+    async def _post(self, path: str, body: dict) -> Any:
+        status, data = await self._transport(path, body)
+        return self._check(status, data)
 
     def _ref(self, token: int) -> dict:
         return {"worker_id": self.worker_id, "fencing_token": token}
@@ -133,6 +155,25 @@ class WorkerApiClient:
 
     async def cancel_ack(self, job_id: str, token: int) -> None:
         await self._post(f"/api/worker/jobs/{job_id}/cancel-ack", self._ref(token))
+
+    # ---------- Phase 6B: media upload ----------
+
+    async def upload_media(self, job_id: str, token: int, *, mime: str, sha256: str, data: bytes) -> dict:
+        """POSTs one output file to /api/worker/jobs/:jobId/media. 201 = stored, 200 = idempotent replay.
+
+        The lease is carried in headers (x-worker-id / x-fencing-token) because the body is the raw file.
+        """
+        if self._upload_transport is None:
+            raise RuntimeError("upload transport is not configured")
+        headers = {
+            "content-type": mime,
+            "x-worker-id": self.worker_id,
+            "x-fencing-token": str(token),
+            "x-content-sha256": sha256,
+        }
+        status, body = await self._upload_transport(f"/api/worker/jobs/{job_id}/media", data, headers)
+        result = self._check(status, body)
+        return result if isinstance(result, dict) else {}
 
     # ---------- Phase 4b: worker health and account readiness ----------
 

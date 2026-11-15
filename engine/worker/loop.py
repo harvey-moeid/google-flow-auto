@@ -1,26 +1,60 @@
-"""Claim -> run -> report loop for one worker.
+"""Claim -> run -> upload outputs -> report loop for one worker.
 
 Rules this module enforces (see apps/api/src/queue.ts for the server side):
   * One job at a time. The server also enforces a single global lease; this loop never overlaps itself.
-  * The lease is kept alive by heartbeats while the adapter runs.
-  * After LeaseLost the worker stops the adapter and sends NOTHING further for that job.
-  * Nothing sensitive is reported: error messages carry only the exception class name, and logs carry
-    only job ids and outcomes (never prompts, tokens or profile paths).
+  * The lease is kept alive by heartbeats while the adapter runs AND while its outputs are uploaded.
+  * After LeaseLost the worker stops what it is doing and sends NOTHING further for that job.
+  * Output files are uploaded before `complete`. If the upload cannot finish, the job is reported failed
+    (retryable only for transient causes); it is never reported complete without its media.
+  * Nothing sensitive is reported: error messages carry only fixed codes or the exception class name, and
+    logs carry only job ids and outcomes (never prompts, tokens, file names or profile paths).
 """
 from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from typing import Callable
 
 from adapters.base import AuthRequired, EngineNotConfigured
 from scheduler.sequential import Job
 from worker.api_client import CancelRequested, Claim, LeaseLost, WorkerApiClient
+from worker.media import MediaUploadError, outputs_of, upload_outputs
 
 
 async def _stop(task: asyncio.Task) -> None:
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+async def _supervise(
+    client: WorkerApiClient,
+    job_id: str,
+    token: int,
+    task: asyncio.Task,
+    heartbeat_interval: float,
+    lease_seconds: int,
+) -> str | None:
+    """Heartbeats while `task` runs. Returns None once the task has finished, else the terminal outcome label."""
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=heartbeat_interval)
+            if done:
+                return None
+            try:
+                cancel_requested = await client.heartbeat(job_id, token, lease_seconds)
+            except LeaseLost:
+                await _stop(task)
+                return "lease_lost"
+            except Exception:
+                continue  # transient network/API error: try again next tick; the server expires the lease if it lasts
+            if cancel_requested:
+                await _stop(task)
+                await client.cancel_ack(job_id, token)
+                return "cancelled"
+    except BaseException:
+        await _stop(task)  # shutdown or unexpected error: never leave the task running
+        raise
 
 
 async def process_claim(
@@ -30,6 +64,8 @@ async def process_claim(
     *,
     heartbeat_interval: float = 20.0,
     lease_seconds: int = 60,
+    output_root: Path | None = None,
+    upload_backoff: float = 2.0,
 ) -> str:
     """Runs one claimed job and reports the outcome. Returns the outcome label."""
     job = claim.job
@@ -58,28 +94,12 @@ async def process_claim(
                 )
             )
         )
-        try:
-            while True:
-                done, _ = await asyncio.wait({run}, timeout=heartbeat_interval)
-                if done:
-                    break
-                try:
-                    cancel_requested = await client.heartbeat(job_id, token, lease_seconds)
-                except LeaseLost:
-                    await _stop(run)
-                    return "lease_lost"
-                except Exception:
-                    continue  # transient network/API error: try again next tick; the server expires the lease if it lasts
-                if cancel_requested:
-                    await _stop(run)
-                    await client.cancel_ack(job_id, token)
-                    return "cancelled"
-        except BaseException:
-            await _stop(run)  # shutdown or unexpected error: never leave the adapter running
-            raise
+        outcome = await _supervise(client, job_id, token, run, heartbeat_interval, lease_seconds)
+        if outcome is not None:
+            return outcome
 
         try:
-            run.result()
+            result = run.result()
         except AuthRequired:
             await client.wait_for_user(job_id, token)
             return "waiting_for_user"
@@ -89,6 +109,31 @@ async def process_claim(
         except Exception as exc:
             await client.fail(job_id, token, "adapter_error", type(exc).__name__, retryable=True)
             return "failed"
+
+        try:
+            paths = outputs_of(result)
+        except MediaUploadError as exc:
+            await client.fail(job_id, token, exc.code, "The adapter returned an invalid outputs list", retryable=exc.retryable)
+            return "failed"
+
+        if paths:
+            upload = asyncio.create_task(
+                upload_outputs(client, job_id, token, paths, output_root, backoff=upload_backoff)
+            )
+            outcome = await _supervise(client, job_id, token, upload, heartbeat_interval, lease_seconds)
+            if outcome is not None:
+                return outcome
+            try:
+                upload.result()
+            except LeaseLost:
+                return "lease_lost"
+            except MediaUploadError as exc:
+                await client.fail(job_id, token, exc.code, "Output upload failed", retryable=exc.retryable)
+                return "failed"
+            except Exception as exc:
+                await client.fail(job_id, token, "media_upload_error", type(exc).__name__, retryable=True)
+                return "failed"
+
         await client.complete(job_id, token)
         return "succeeded"
     except LeaseLost:
@@ -126,11 +171,13 @@ async def serve(
     status_provider: Callable[[str], dict] | None = None,
     status_interval: float = 30.0,
     clock: Callable[[], float] = time.monotonic,
+    output_root: Path | None = None,
 ) -> None:
     """Polls the queue until `stop` is set. A job in progress is always finished (or reported) first.
 
     `status_provider(state)` returns the keyword arguments of WorkerApiClient.report_status; when given,
     the worker reports idle every `status_interval` seconds, busy while a job runs and stopping on exit.
+    `output_root` is the only directory adapter output files may be uploaded from.
     """
     backoff = 1.0
     last_report = float("-inf")
@@ -156,7 +203,12 @@ async def serve(
                 continue
             await _report_status(client, status_provider, "busy", log)
             outcome = await process_claim(
-                client, scheduler, claim, heartbeat_interval=heartbeat_interval, lease_seconds=lease_seconds
+                client,
+                scheduler,
+                claim,
+                heartbeat_interval=heartbeat_interval,
+                lease_seconds=lease_seconds,
+                output_root=output_root,
             )
             log(f"job {claim.job['id']}: {outcome}")
             last_report = float("-inf")  # report idle again on the next iteration

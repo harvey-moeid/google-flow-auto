@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse, asyncio, getpass, json, os, re, signal, socket, sys
+from pathlib import Path
 from dotenv import load_dotenv
 from accounts.profile_manager import ProfileManager
 from scheduler.sequential import SequentialScheduler, Job
@@ -23,9 +24,15 @@ def make_transport():
     return HttpxTransport(os.getenv("API_BASE_URL", ""), os.getenv("WORKER_TOKEN", ""))
 
 
+def output_root_from_env():
+    """FLOW_OUTPUT_DIR is the only directory output files may be uploaded from. Unset = uploads are refused."""
+    raw = os.getenv("FLOW_OUTPUT_DIR", "").strip()
+    return Path(raw) if raw else None
+
+
 async def run_queue(scheduler, data_dir, once=False):
     transport = make_transport()
-    client = WorkerApiClient(transport, default_worker_id())
+    client = WorkerApiClient(transport, default_worker_id(), upload_transport=transport.post_bytes)
     stop = asyncio.Event()
     if not once:
         loop = asyncio.get_running_loop()
@@ -35,7 +42,14 @@ async def run_queue(scheduler, data_dir, once=False):
             except NotImplementedError:
                 pass
     try:
-        await serve(client, scheduler, stop, once=once, status_provider=lambda state: health.collect(data_dir, state))
+        await serve(
+            client,
+            scheduler,
+            stop,
+            once=once,
+            status_provider=lambda state: health.collect(data_dir, state),
+            output_root=output_root_from_env(),
+        )
     finally:
         await transport.aclose()
 
