@@ -41,8 +41,22 @@ jobs:
       - name: Scan built frontend for secrets
         run: npm run check:secrets
 
-      - name: Deploy to Cloudflare Pages
-        run: npm exec --workspace apps/api -- wrangler pages deploy apps/pwa/dist --project-name=google-flow-auto --branch=main
+      - name: Ensure Cloudflare Pages project exists
+        working-directory: apps/api
+        shell: bash
+        run: |
+          set -euo pipefail
+          projects="$(npx wrangler pages project list)"
+          if ! grep -Fq "google-flow-auto" <<< "$projects"; then
+            npx wrangler pages project create google-flow-auto --production-branch main
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy production site to Cloudflare Pages
+        working-directory: apps/api
+        run: npx wrangler pages deploy ../pwa/dist --project-name=google-flow-auto --branch=main
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
