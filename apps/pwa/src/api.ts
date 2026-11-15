@@ -74,6 +74,7 @@ const MESSAGES: Record<string, string> = {
   payload_too_large: "Isian terlalu panjang.",
   worker_limit_reached: "Batas jumlah worker yang tercatat sudah tercapai.",
   media_not_found: "Media tidak ditemukan.",
+  job_active: "Media job yang sedang diproses worker belum bisa dihapus. Tunggu job selesai atau batalkan dulu.",
 };
 
 export function describeError(error: unknown): string {
@@ -227,6 +228,12 @@ export type JobMedia = {
   duration_ms: number | null;
   created_at: string;
 };
+
+/**
+ * Result of POST /api/media/:id/delete. The listing entry is always gone when this resolves;
+ * `object_deleted:false` means the stored file could not be removed right now and remains as an orphan.
+ */
+export type MediaDeleteResult = { id: string; deleted: true; object_deleted: boolean };
 
 const MEDIA_EXTENSIONS: Record<string, string> = {
   "video/mp4": "mp4",
