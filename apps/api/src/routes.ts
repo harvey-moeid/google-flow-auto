@@ -1,6 +1,7 @@
 import { HttpError, jsonResponse, readJsonObject } from "./http.ts";
 import { isUniqueViolation, page, parsePagination } from "./paging.ts";
 import { jobRoutes } from "./job-routes.ts";
+import { mediaRoutes } from "./media-routes.ts";
 import { projectRoutes } from "./project-routes.ts";
 import { ACTIVE_STATUSES } from "./queue.ts";
 import { auditIfChanged, auditStatement } from "./route-types.ts";
@@ -349,4 +350,4 @@ const ownerRoutes: Route[] = [
   { method: "GET", pattern: /^\/api\/audit$/, write: false, audience: "owner", handler: listAudit },
 ];
 
-export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...ownerRoutes, ...workerRoutes, ...workerHealthRoutes];
+export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...mediaRoutes, ...ownerRoutes, ...workerRoutes, ...workerHealthRoutes];
