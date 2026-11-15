@@ -19,6 +19,10 @@ const TIMELINE_DETAIL_KEYS = [
   "retry_of",
   "engine",
   "acknowledged_by_worker",
+  "media_id",
+  "mime",
+  "size_bytes",
+  "disposition",
 ] as const;
 
 const TIMELINE_LIMIT = 100;

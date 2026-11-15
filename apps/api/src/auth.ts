@@ -20,14 +20,14 @@ const MAX_TOKEN_LENGTH = 512;
 const CLOCK_SKEW_S = 60;
 const B64URL_RE = /^[A-Za-z0-9_-]+$/;
 
-function bytesToB64url(bytes: Uint8Array): string {
+export function bytesToB64url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 /** Throws on invalid input; callers treat that as a malformed token. */
-function b64urlToBytes(value: string): Uint8Array {
+export function b64urlToBytes(value: string): Uint8Array {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
@@ -35,12 +35,12 @@ function b64urlToBytes(value: string): Uint8Array {
   return bytes;
 }
 
-async function hmac(secret: string, data: string): Promise<Uint8Array> {
+export async function hmac(secret: string, data: string): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(data)));
 }
 
-function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   let diff = a.length ^ b.length;
   const length = Math.max(a.length, b.length);
   for (let i = 0; i < length; i += 1) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
