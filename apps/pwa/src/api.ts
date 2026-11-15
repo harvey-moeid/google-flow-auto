@@ -73,6 +73,7 @@ const MESSAGES: Record<string, string> = {
   live_engine_disabled: "Engine live dinonaktifkan; gunakan mode dry-run.",
   payload_too_large: "Isian terlalu panjang.",
   worker_limit_reached: "Batas jumlah worker yang tercatat sudah tercapai.",
+  media_not_found: "Media tidak ditemukan.",
 };
 
 export function describeError(error: unknown): string {
@@ -207,4 +208,63 @@ export function patch<T>(path: string, body: unknown): Promise<T> {
 /** Deleting is a POST action (like cancel/resume), so the API only needs GET/POST/PATCH. */
 export function remove<T>(path: string): Promise<T> {
   return post<T>(`${path}/delete`);
+}
+
+// ---------- Phase 6B: job media (private R2, owner-authenticated) ----------
+
+/** Public media metadata from GET /api/jobs/:id/media. The API never exposes the storage key. */
+export type JobMedia = {
+  id: string;
+  job_id: string;
+  project_id: string;
+  scene_id: string | null;
+  kind: "video" | "image";
+  mime: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+};
+
+const MEDIA_EXTENSIONS: Record<string, string> = {
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+};
+
+/** Same file name the API suggests in its content-disposition header. */
+export function mediaFileName(item: Pick<JobMedia, "id" | "mime">): string {
+  const extension = MEDIA_EXTENSIONS[item.mime];
+  return extension ? `media-${item.id}.${extension}` : `media-${item.id}`;
+}
+
+/**
+ * Downloads one media file through the owner session cookie. The bytes are streamed by the API; there is
+ * no public bucket URL and no token in any URL, so the result is only ever held as an in-memory Blob.
+ */
+export async function fetchMediaBlob(id: string): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/media/${id}`, { credentials: API_BASE ? "include" : "same-origin" });
+  } catch {
+    throw new ApiError(0, "network", MESSAGES.network);
+  }
+  if (!res.ok) {
+    let code = `http_${res.status}`;
+    let message = `Permintaan gagal (${res.status}).`;
+    let requestId: string | undefined;
+    try {
+      const body = await res.json();
+      if (body?.error) {
+        code = body.error.code ?? code;
+        message = body.error.message ?? message;
+        requestId = body.error.request_id;
+      }
+    } catch {
+      // non-JSON error body: keep the generic message
+    }
+    throw new ApiError(res.status, code, message, requestId);
+  }
+  return res.blob();
 }

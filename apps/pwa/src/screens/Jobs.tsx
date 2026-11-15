@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ChevronRight, Play, RotateCcw, XCircle } from "lucide-react";
 import { FINAL_JOB_STATUSES, STATUS_LABELS, api, describeError, newKey, post } from "../api";
 import type { Job, JobDetail } from "../api";
+import { MediaPanel } from "./MediaPanel";
 
 const EVENT_LABELS: Record<string, string> = {
   "job.queued": "Masuk antrean",
@@ -204,6 +205,8 @@ export function JobScreen({
         </div>
         {error ? <div className="notice">{error}</div> : null}
       </section>
+
+      <MediaPanel jobId={id} status={job.status} />
 
       <section className="panel">
         <h2>Riwayat</h2>
