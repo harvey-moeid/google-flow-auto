@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from playwright.async_api import async_playwright, BrowserContext
+from worker.profile_audit import ProfileIsolationError, ensure_marker
 from .slots import slot_from_account_id
 
 class ProfileManager:
@@ -18,7 +19,10 @@ class ProfileManager:
     def _profile_path(self, account_id: str) -> Path:
         slot = slot_from_account_id(account_id)
         path = self.root / f"slot-{slot:02d}"
+        if path.is_symlink():
+            raise ProfileIsolationError("Profile directory must not be a symlink")
         path.mkdir(parents=True, exist_ok=True)
+        ensure_marker(path, slot)  # adopts a legacy profile; refuses one marked for another slot
         return path
 
     async def open_for_manual_login(self, account_id: str, origin: str) -> BrowserContext:

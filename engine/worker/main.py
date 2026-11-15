@@ -1,13 +1,14 @@
 from __future__ import annotations
-import argparse, asyncio, os, re, signal, socket, sys
+import argparse, asyncio, json, os, re, signal, socket, sys
 from dotenv import load_dotenv
 from accounts.profile_manager import ProfileManager
 from scheduler.sequential import SequentialScheduler, Job
 from adapters.dry_run import DryRunAdapter
 from adapters.base import NotConfiguredAdapter
-from worker import health
+from worker import health, profile_audit
 from worker.api_client import HttpxTransport, WorkerApiClient
 from worker.enroll import DEFAULT_ENROLL_URL, enroll
+from worker.host_lock import HostLock, HostLocked
 from worker.loop import serve
 
 load_dotenv()
@@ -46,19 +47,15 @@ async def run_enroll(account_id, pm):
         await transport.aclose()
 
 
-async def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--job-id")
-    parser.add_argument("--account-id", default="acct-01")
-    parser.add_argument("--engine", default="dry-run", choices=["dry-run", "flowkit", "gflow"])
-    parser.add_argument("--serve", action="store_true", help="poll the queue API until stopped")
-    parser.add_argument("--once", action="store_true", help="poll the queue API for at most one job")
-    parser.add_argument("--enroll", metavar="ACCOUNT_ID", help="open ONLY this slot's profile so the owner can sign in by hand (stop --serve first)")
-    args = parser.parse_args()
-    data_dir = os.getenv("FLOW_WORKER_DATA_DIR", "./.worker-data")
-    headless = os.getenv("FLOW_HEADLESS", "false").lower() == "true"
-    if args.enroll and headless:
-        sys.exit("--enroll needs a visible browser window; set FLOW_HEADLESS=false")
+def audit_or_exit(data_dir):
+    """Refuses to open any browser profile while an isolation problem exists. Reports slot numbers and codes only."""
+    result = profile_audit.audit(data_dir)
+    if not result.ok:
+        detail = ", ".join(p["code"] + (f" (slot {p['slot']})" if p["slot"] else "") for p in result.problems)
+        sys.exit(f"Profile isolation check failed: {detail}")
+
+
+async def run(args, data_dir, headless):
     pm = ProfileManager(data_dir, headless=headless)
     await pm.start()
     if args.enroll:
@@ -79,6 +76,36 @@ async def main():
         print(await scheduler.execute(job))
     finally:
         await pm.close()
+
+
+async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--job-id")
+    parser.add_argument("--account-id", default="acct-01")
+    parser.add_argument("--engine", default="dry-run", choices=["dry-run", "flowkit", "gflow"])
+    parser.add_argument("--serve", action="store_true", help="poll the queue API until stopped")
+    parser.add_argument("--once", action="store_true", help="poll the queue API for at most one job")
+    parser.add_argument("--enroll", metavar="ACCOUNT_ID", help="open ONLY this slot's profile so the owner can sign in by hand (stop --serve first)")
+    parser.add_argument("--audit-profiles", action="store_true", help="read-only profile isolation check; prints JSON (slot numbers and codes only), exit 1 on a problem")
+    args = parser.parse_args()
+    data_dir = os.getenv("FLOW_WORKER_DATA_DIR", "./.worker-data")
+    headless = os.getenv("FLOW_HEADLESS", "false").lower() == "true"
+    if args.audit_profiles:
+        result = profile_audit.audit(data_dir)
+        print(json.dumps(result.as_dict()))
+        sys.exit(0 if result.ok else 1)
+    if args.enroll and headless:
+        sys.exit("--enroll needs a visible browser window; set FLOW_HEADLESS=false")
+    # Only one worker process may own the data directory (and so the ten profiles) at a time.
+    try:
+        lock = HostLock(data_dir).acquire()
+    except HostLocked as exc:
+        sys.exit(str(exc))
+    try:
+        audit_or_exit(data_dir)
+        await run(args, data_dir, headless)
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":

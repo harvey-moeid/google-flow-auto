@@ -1,0 +1,38 @@
+# TEMPLATE - not yet verified on a real host. Copy to /etc/systemd/system/, adjust the paths and user, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now google-flow-worker
+# See docs/HOST_LIFECYCLE.md. FLOW_WORKER_DATA_DIR must be on an encrypted volume (see that document).
+[Unit]
+Description=Google Flow Auto worker (queue consumer; browser profiles stay on this host)
+After=network-online.target
+Wants=network-online.target
+# Never restart-loop forever: 5 failed starts in 10 minutes leaves the unit failed for the owner to inspect.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=flowworker
+Group=flowworker
+WorkingDirectory=/opt/google-flow-auto/engine
+# Holds API_BASE_URL, WORKER_TOKEN, WORKER_ID, FLOW_WORKER_DATA_DIR, FLOW_HEADLESS=true. Mode 0600, owner root.
+EnvironmentFile=/etc/google-flow-auto/worker.env
+# Fail closed: do not start if any profile directory is a symlink, alias, copy or marked for another slot.
+ExecStartPre=/opt/google-flow-auto/engine/.venv/bin/python -m worker.main --audit-profiles
+ExecStart=/opt/google-flow-auto/engine/.venv/bin/python -m worker.main --serve
+Restart=on-failure
+RestartSec=10
+# SIGTERM makes the worker stop claiming and finish or report the job in progress (engine/worker/loop.py).
+KillSignal=SIGTERM
+# Must exceed the longest expected job. If systemd has to SIGKILL, the job lease expires on the server and
+# the job is recovered by the next claim; the lock file is released by the OS either way.
+TimeoutStopSec=900
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+# Adjust to the encrypted data volume. Playwright needs a writable HOME/browser cache too.
+ReadWritePaths=/var/lib/google-flow-auto
+
+[Install]
+WantedBy=multi-user.target
