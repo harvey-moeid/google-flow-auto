@@ -69,6 +69,13 @@ const SAMPLES: Array<{ method: string; path: string; body?: unknown }> = [
   },
   { method: "POST", path: `/api/worker/jobs/${UUID}/wait`, body: WORKER_BODY },
   { method: "POST", path: `/api/worker/jobs/${UUID}/cancel-ack`, body: WORKER_BODY },
+  { method: "GET", path: "/api/workers" },
+  { method: "POST", path: "/api/worker/status", body: { worker_id: "worker-1", state: "idle", profile_count: 0 } },
+  {
+    method: "POST",
+    path: "/api/worker/accounts/acct-01/readiness",
+    body: { worker_id: "worker-1", status: "ready", owner_confirmed: true },
+  },
 ];
 
 const isWorkerSample = (sample: { path: string }) => sample.path.startsWith("/api/worker/");
