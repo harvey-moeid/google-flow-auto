@@ -3,7 +3,7 @@
 Repository: harvey-moeid/google-flow-auto  
 Product target: Android-first PWA control plane for 10 manually managed Google Flow account slots.  
 Fixed decisions: manual account enrollment and selection, one global sequential execution lane, hybrid architecture, free-first deployment.  
-Verified baseline (2026-11-15): main `67b3ab7671ab018a2579dd131fecbd665e3cdaca`; Phase 6A and Phase 6B steps 1–3 merged; main Test run #69 (`43686179796`) passed. PR #25 (media delete) is open. No deployment was performed and no live adapter is enabled.
+Verified baseline (2026-11-15): see current main branch and GitHub Actions. No live adapter is enabled.
 
 ## Product and architecture decisions
 - PWA: React + TypeScript + Vite, installable from Android Chrome.
@@ -11,87 +11,43 @@ Verified baseline (2026-11-15): main `67b3ab7671ab018a2579dd131fecbd665e3cdaca`;
 - Queue: durable queue plus one authoritative global lease/lock.
 - Browser execution: Python + Playwright on a trusted persistent host with encrypted storage. GitHub Actions is for CI/deploy, not persistent browser sessions.
 - Profiles: one isolated persistent profile per account slot; owner manually signs in. Never move profiles/cookies into GitHub, D1, CI artifacts, or logs.
+- Android-only enrollment target: use a private remote desktop (Xvfb + x11vnc + noVNC) on the persistent Worker host, reached from Android through Cloudflare Tunnel + Access. Cloudflare Pages/Workers alone cannot run the persistent interactive Chromium browser.
 - Engines: FLOW KIT and gflow-cli are unapproved research candidates. No adapter is enabled until a documented and permitted integration gate is met.
 - Auth: owner password and signed expiring HttpOnly cookie; browser worker bearer token accepted only on worker endpoints.
 - Policy: no quota/rate-limit evasion, CAPTCHA/security challenge bypass, or undocumented/protected endpoints. Pause for manual reauthentication.
 - Storage: R2 bucket is private; owner media reads go through the authenticated Worker API. No public object URLs.
 
+## Android remote enrollment status
+**BLOCKED — host prerequisite.** Existing enrollment requires a visible Chromium window and terminal confirmation on the Worker host. It cannot currently be completed from Android alone. See `docs/ANDROID_REMOTE_ENROLLMENT.md` for the proposed architecture, state machine, security controls, and acceptance tests. No remote desktop service or PWA remote-enrollment control has been deployed.
+
 ## Phase progress
 | Phase | Status | Evidence / remaining work |
 |---|---|---|
-| 0–3B | Implemented and merged | Project/scene workflow and reference media foundations. |
-| 4A | Merged | Worker claims and reports jobs; dry-run only. |
-| 4B | Merged | Heartbeat, health endpoint and owner-attested manual enrollment. |
-| 4C | Merged | Android worker monitoring and manual enrollment runbook. |
-| 4D | Merged | Host lock, profile isolation audit, marker and systemd template; real-host verification remains. |
-| 4E | Merged | Encrypted local backup/restore CLI; separate-host restore and encrypted-volume proof remain owner-run. |
-| 4 operational exit | BLOCKED — owner-run | Encrypted disk, service lifecycle, profile persistence/isolation, kill recovery, separate-host restore and real D1/API staging smoke not evidenced. |
-| 5 | Qualification gate / BLOCKED | FLOW KIT and gflow-cli do not currently meet documented/permitted-interface requirements. Only dry-run is functional. |
-| 6A | Merged — API foundation | PR #19: private R2 upload, D1 metadata, owner-only list/download, SHA-256 and file signature validation, lease fencing and tests. One-shot upload cap 25 MiB. |
-| 6B | In progress | Steps 1–3 merged (PR #21 worker upload, PR #22 PWA media panel, PR #24 metadata). Step 4a (owner delete) in open PR #25. Remaining: PWA delete control, orphan detection (dry-run), retention decision, resumable uploads, staging verification. |
+| 0–3B | Implemented in repository | Project/scene workflow and reference media foundations. |
+| 4A | Implemented | Worker claims, dry-run and queue reporting. |
+| 4B | Implemented | Heartbeat, health endpoint and owner-attested manual enrollment (terminal). |
+| 4C | Implemented | Android worker monitoring and manual enrollment runbook. |
+| 4D | Implemented | Host lock, profile isolation audit, marker and systemd template; real-host verification remains. |
+| 4E | Implemented | Encrypted local backup/restore CLI; separate-host restore and encrypted-volume proof remain owner-run. |
+| 4F Android remote enrollment | **Not implemented — blocked** | Provision persistent Linux host; add Xvfb/noVNC + Access/Tunnel; implement enrollment session D1/API state machine and worker command loop; add PWA remote view/finish/cancel; test Android E2E and recovery. |
+| 5 | Qualification gate / blocked | FLOW KIT and gflow-cli do not currently meet documented/permitted-interface requirements. Only dry-run is functional. |
+| 6 | Media pipeline in progress | Review current PRs and run staging verification; see repository docs and open PRs. |
 | 7 | Not started | Production hardening, backups, Android E2E, staging and release. |
 
-## Phase 4 — Browser worker and account lifecycle
-- [x] Python worker claims, executes dry-run and reports queue outcomes (4A).
-- [x] Worker process heartbeat, online/offline state, disk/profile count and owner status API (4B).
-- [x] Manual owner-confirmed enrollment for one selected isolated profile (4B).
-- [x] Android PWA worker monitoring and clear manual enrollment instructions (4C).
-- [x] Host single-process lock, profile isolation audit and systemd service template (4D; code/CI only).
-- [x] Owner-controlled encrypted local backup/restore CLI (4E; code/CI only).
-- [ ] Prove encrypted volume, persistent isolated profiles, service supervision, kill recovery, and backup restore on a separate owner-controlled host.
-- [ ] Real Cloudflare staging smoke with worker token, API and D1.
-
-Phase 4 exit: all ten profiles remain isolated and recoverable through restart; reauth pauses safely; one global sequential lane remains authoritative; operational status and recovery are verified on staging. Code completion alone does not satisfy the operational exit.
-
-## Phase 5 — Qualify a permitted live engine adapter
-- Audit candidate source, license, authentication, documented integration surface and current maintenance.
-- Reject any integration requiring undocumented/private endpoints, replaying protected calls, CAPTCHA/reCAPTCHA workarounds, or bypassing security challenges.
-- Define versioned adapter contract: capabilities, validate, submit, poll, cancel-if-supported, fetch result and classify errors.
-- Implement one adapter behind a feature flag only after the documented/permitted interface gate passes.
-- Add mock contract tests and supervised integration on one owner-controlled account.
-- Test output integrity, quota handling, transient failures and reauthentication.
-- Keep dry-run default; require explicit live-mode confirmation and retain the kill switch.
-
-**Current gate result:** BLOCKED. See `docs/PHASE_5_ADAPTER_QUALIFICATION.md`. If no stable permitted interface exists, do not reverse-engineer protected endpoints. Release as manual-assisted, not fully automated.
-
-## Phase 6 — Private media pipeline
-
-### Phase 6A — API foundation (merged)
-- [x] D1 `media` metadata table and indexes (`0005_media.sql`).
-- [x] Worker-only upload route guarded by bearer identity and the active job fencing lease.
-- [x] MIME allowlist, file magic validation, 25 MiB bounded upload, and SHA-256 verification.
-- [x] Server-generated R2 keys; object metadata and D1 metadata linked by media UUID.
-- [x] Owner-only media listing per job and authenticated streamed download.
-- [x] Audit event and idempotent replay handling.
-- [x] Regression tests for valid upload/download, replay, bad checksum/signature, lease expiry, orphan cleanup and audience separation.
-- [ ] Remote D1 migration and R2 binding verified in an authorized staging environment.
-
-### Phase 6B — End-to-end media lifecycle (in progress)
-- [x] Python worker uploads generated outputs before marking a job succeeded (PR #21; fake-transport tests only).
-- [x] Worker handles upload retry and checksum idempotency without completing a job whose output has not been persisted (PR #21).
-- [x] PWA shows media per job with preview, size/type and authenticated download (PR #22; not exercised in a real browser).
-- [x] Optional width/height/duration metadata with bounds validation and owner UI display (PR #24; adapter/worker-supplied, not extracted from file bytes).
-- [ ] Owner-authorized, audited delete (PR #25 open: API only; PWA control still to do).
-- [ ] Retention policy (owner decision; nothing is deleted automatically).
-- [ ] Orphan detection with dry-run report only; design how to identify objects without exposing R2 keys. No automatic cleanup until retention safety is agreed.
-- [ ] Resumable/multipart upload path for media larger than 25 MiB.
-- [ ] Integration tests cover upload failure, retry, duplicate upload, expired lease, missing R2 object and owner access.
-- [ ] Staging smoke test uses private R2 and D1 (apply migrations 0005–0006); no production deployment without approval.
-
-## Phase 7 — Production hardening and release
-- Structured redacted logs, metrics and alerts for queue age, worker health, lease and error rates.
-- D1 backup/export and demonstrated restore; R2 retention/backup policy.
-- Dependency/secret scanning, lint, typecheck, tests and thresholds.
-- Staging deployment, manual approval and rollback workflow.
-- Android Chrome end-to-end acceptance tests.
-- Load test within provider limits; document free-tier constraints and actual costs.
-- Runbooks for onboarding, reauth, stuck jobs, restore, rollback, credential rotation and live kill switch.
-- Tag release and publish operator guide.
+## Phase 4F implementation sequence
+1. **Host decision:** choose persistent Linux VPS/VM, encrypted persistent volume, region, backup and budget. Do not use GitHub Actions as a browser host.
+2. **Remote desktop baseline:** run Xvfb, x11vnc bound to loopback, noVNC/websockify, and Cloudflare Tunnel. Protect noVNC with Cloudflare Access; do not expose VNC port 5900.
+3. **Session API:** add D1 enrollment session migration, owner create/status/finish/cancel routes, worker command claim/heartbeat/complete routes, TTL and audit. Enforce one active session globally and reject active queue/profile work.
+4. **Worker lifecycle:** safely open exactly one slot profile on the virtual display, keep it open only while session active, close before marking ready, and recover safely on timeout/crash/restart.
+5. **Android PWA:** slot-specific Start enrollment, status polling, open remote view, finish/cancel controls, clear timeout and error states.
+6. **Verification:** automated tests for state transitions and authorization; real Android Chrome + Cloudflare Access + persistent host E2E; prove no public VNC exposure and no secrets in client bundle/logs.
+7. **Release:** only mark 4F complete after operational tests and encrypted backup/restore pass.
 
 ## Final acceptance checklist
 - [ ] PWA installs and normal control works from Android.
-- [ ] Production identity/auth works; no privileged secret in frontend (logic CI-tested; staging not verified).
+- [ ] Owner authentication works; no privileged secret in frontend.
 - [ ] Ten account slots are manageable; manual enrollment and manual selection.
+- [ ] Android-only remote enrollment works through an Access-protected browser view.
 - [ ] Ten isolated persistent profiles, safely stored and recoverable.
 - [ ] One global sequential lane survives worker restarts.
 - [ ] Projects and ordered scenes can be created/edited.
