@@ -34,12 +34,13 @@ This is a scaffold, not a final or production-ready implementation. The plan fil
 10. Remote manual enrollment, persistent worker host operations, backup and restore are incomplete.
 11. Production Cloudflare IDs/secrets/auth are not configured.
 
-## Immediate next task: Phase 2 (Phase 1 done pending merge of PR #4)
-- Versioned D1 migrations replacing bootstrap-only schema evolution.
-- Atomic job claim, global lease with expiry/heartbeat/fencing token, stale-worker recovery, bounded retries, safe cancellation.
-- Worker-facing endpoints must use a Cloudflare Access **service token** with its own narrow authorization (the shared bearer token is gone).
+## Immediate next task: Phase 3B (Phase 0-2 and Phase 3A are done in git history; 3A pending merge of its PR)
+Phase 3A (API + PWA for projects, scenes, review/submit, job detail, retry) is implemented. Still open in Phase 3:
+- Private R2 upload of reference assets and the output gallery (also needs Phase 6 download URLs).
+- Scene reference assets and per-scene aspect-ratio/duration limits once Phase 5 verifies real engine limits (current 1-60 s is a generic bound).
+- Worker claim payload must also carry the scene prompt/duration and project aspect ratio; today it only returns ids (needed before Phase 4/5 workers can run anything real).
+- PWA screens were type-checked and built but never exercised in a real browser or on Android; add an Android Chrome check (Phase 7 E2E).
 - Keep live adapters disabled.
-- Commit small, reviewable changes and report exact workflow run and test outcomes.
 
 ## Rules for every continuation session
 - Work from current `main`; create a feature branch and PR for each coherent phase.
@@ -95,3 +96,15 @@ At the end of each work session update:
 - Security review: no secrets in git or bundle (scanner). Known gaps: Workers rate limiting is approximate/per-location; engine worker does not call the API yet; the PWA has no UI for audit/cancel; R2 is still unused.
 - Blockers and decisions: owner must create the Access app and fill `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, route, and `wrangler secret put ALLOWED_EMAILS` before any deploy. Local `engine` pytest shows 12 async failures only when `pytest-asyncio` is missing; identical on `main`, green in CI.
 - Next concrete task: Phase 2 — versioned D1 migrations, atomic claim and global lease with fencing, service-token auth for the worker.
+
+### Session 3 — Phase 3A (project workflow API + PWA)
+- Current phase: Phase 3A implemented and verified locally; Phase 3B (R2 assets, gallery) not started.
+- State found at start: `main` already contained Phase 2 (PR #5, durable queue/lease), PR #6 (D1 id) and PRs #7/#8, which replaced Cloudflare Access with owner password + signed session cookie and a worker bearer token (`OWNER_PASSWORD`, `SESSION_SECRET`, `WORKER_TOKEN`, `RL_LOGIN`). Those sessions were not logged here; `Test` run 43611401360 on `main` was green. `README.md` and `docs/DEPLOY_ANDROID.md` still describe Access and are stale (not fixed in this session).
+- Branch / PR: `feat/phase-3a-projects`.
+- New: `cloudflare/migrations/0003_projects_scenes.sql` (jobs.retry_of, indexes, project-status and 50-scene triggers; must be applied with `wrangler d1 migrations apply`, not run by the deploy workflow as far as read). API: `project-routes.ts` (list with scene_count/status filter, GET/PATCH project with archive, scene create/patch/`POST /api/scenes/:id/delete`/reorder, readiness, submit = one job per scene in scene order with per-scene idempotency keys and `expected_scene_count` stale-review guard), `job-routes.ts` (`GET /api/jobs/:id` with allow-listed timeline that hides worker id and lease data, `POST /api/jobs/:id/retry` creating a new job linked by retry_of), `paging.ts` (helpers moved out of `routes.ts`), multi-line prompt support in `validate.ts`, `GET /api/jobs?project_id=`. PWA: `screens/{Projects,ProjectEditor,Review,Jobs}.tsx`, `screens.css`, Android Back via history stack.
+- Behavioural rules enforced by the API: scenes with a queued/claimed/running/waiting job cannot be edited or deleted; archived projects refuse edits, new scenes and submits; archive and aspect-ratio change are refused while jobs are active; submit and retry only use engine dry-run unless `LIVE_ENGINES_ENABLED=true`; a retry needs a Ready account and no active job on the scene.
+- Tests run and exact results (local, Node 22, clean `npm ci`): `npm run check` = 95 API tests pass (74 existing + 21 new), 8 script tests pass, PWA `tsc -b && vite build` OK, bundle secret scan OK. Eight deliberate code mutations (reorder offset, scene lock, archived check on submit, stale-review guard, submit idempotency, worker id in timeline, retry of non-final jobs, multi-line prompts) each made at least one test fail. D1 batch/trigger behaviour is simulated with SQLite, not proven on real D1.
+- Deployment/staging status: none.
+- Security review: no secrets added; audit rows store field names and ids, never prompt text; the timeline exposes only allow-listed audit keys.
+- Blockers and decisions: delete is a POST action so the method allow-list stays GET/POST/PATCH; scene gaps after delete are allowed (reorder renumbers 1..N); the unverified real limits of Google Flow remain unverified.
+- Next concrete task: apply migration 0003 to the real D1, merge the Phase 3A PR after CI, then Phase 3B (worker claim payload with scene data, R2 asset upload, gallery).
