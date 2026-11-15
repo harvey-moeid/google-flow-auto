@@ -1,3 +1,4 @@
+/* Phase 3 screens. Colours reuse the palette from style.css; no inline styles (CSP-friendly). */
 .row{display:flex;align-items:center;gap:8px}
 .split{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .muted{color:#8392ac;font-size:10px}

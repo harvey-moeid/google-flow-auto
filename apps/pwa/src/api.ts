@@ -1,5 +1,5 @@
 /**
- * API client. The owner signs in with a password (login); the server answers with an HttpOnly
+ * API client. The owner signs in with a password (`login`); the server answers with an HttpOnly
  * session cookie that JavaScript cannot read, so this bundle carries NO credentials, stores no token
  * and sends no Authorization header. Never add a token, key or secret here: everything in a PWA
  * bundle is public. The password is only ever sent to /api/login and is not kept after the call.
@@ -30,6 +30,7 @@ export type Job = {
 };
 export type Page<T> = { items: T[]; next_cursor: string | null };
 
+// Empty in production (same-origin, API served under /api on the same hostname).
 const API_BASE: string = import.meta.env.VITE_API_URL || "";
 
 export class ApiError extends Error {
@@ -77,7 +78,7 @@ const MESSAGES: Record<string, string> = {
 export function describeError(error: unknown): string {
   if (error instanceof ApiError) {
     const text = MESSAGES[error.code] ?? error.message;
-    return error.requestId ? text + " (" + error.code + " · " + error.requestId.slice(0, 8) + ")" : text;
+    return error.requestId ? `${text} (${error.code} · ${error.requestId.slice(0, 8)})` : text;
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -98,8 +99,8 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(0, "network", MESSAGES.network);
   }
   if (!res.ok) {
-    let code = "http_" + res.status;
-    let message = "Permintaan gagal (" + res.status + ").";
+    let code = `http_${res.status}`;
+    let message = `Permintaan gagal (${res.status}).`;
     let requestId: string | undefined;
     try {
       const body = await res.json();
@@ -116,13 +117,17 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Exchanges the owner password for an HttpOnly session cookie (set by the server, never readable here). */
 export function login(password: string): Promise<{ ok: true; expires_at: string }> {
   return api("/api/login", { method: "POST", body: JSON.stringify({ password }) });
 }
 
+/** Clears the session cookie. */
 export function logout(): Promise<{ ok: true }> {
   return api("/api/logout", { method: "POST", body: "{}" });
 }
+
+// ---------- Phase 3: projects, scenes, review, jobs ----------
 
 export type Project = {
   id: string;
@@ -188,6 +193,7 @@ export const PROBLEM_LABELS: Record<string, string> = {
   scene_busy: "Ada scene yang masih punya job antre atau berjalan.",
 };
 
+/** One key per user intention (a form, a button press) so a double tap or a retry never queues twice. */
 export function newKey(): string {
   return crypto.randomUUID();
 }
@@ -198,6 +204,7 @@ export function post<T>(path: string, body: unknown = {}): Promise<T> {
 export function patch<T>(path: string, body: unknown): Promise<T> {
   return api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 }
+/** Deleting is a POST action (like cancel/resume), so the API only needs GET/POST/PATCH. */
 export function remove<T>(path: string): Promise<T> {
-  return post<T>(path + "/delete");
+  return post<T>(`${path}/delete`);
 }
