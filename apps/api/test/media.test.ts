@@ -12,7 +12,7 @@ function fakeBucket() {
     async get(key: string) {
       const value = objects.get(key);
       if (!value) return null;
-      return { body: new Blob([value]).stream(), size: value.length };
+      return { body: new Blob([new Uint8Array(value).buffer as ArrayBuffer]).stream(), size: value.length };
     },
   };
 }
@@ -47,7 +47,7 @@ async function upload(h: Awaited<ReturnType<typeof createHarness>>, jobId: strin
     path: `/api/worker/jobs/${jobId}/media`,
     bearer: WORKER_TOKEN,
     headers: Object.fromEntries(headers.entries()),
-  }, bytes);
+  }, bytes.slice().buffer as ArrayBuffer);
   return send(h, request);
 }
 
@@ -69,11 +69,14 @@ test("worker uploads verified media to private R2 and owner can list/download it
   assert.equal(listed.json.items.length, 1);
   assert.ok(!("r2_key" in listed.json.items[0]), "internal R2 key is never exposed");
 
-  const downloaded = await authed(h, { path: `/api/media/${result.json.id}` });
-  assert.equal(downloaded.status, 200);
-  assert.equal(downloaded.headers.get("content-type"), "image/png");
-  assert.equal(downloaded.headers.get("cache-control"), "private, no-store, max-age=0");
-  assert.deepEqual(new Uint8Array(await new Response(downloaded.text).arrayBuffer()), new Uint8Array());
+  const downloadResponse = await h.app.fetch(
+    buildRequest({ path: `/api/media/${result.json.id}`, session: await h.session() }),
+    h.env as never,
+  );
+  assert.equal(downloadResponse.status, 200);
+  assert.equal(downloadResponse.headers.get("content-type"), "image/png");
+  assert.equal(downloadResponse.headers.get("cache-control"), "private, no-store, max-age=0");
+  assert.deepEqual(new Uint8Array(await downloadResponse.arrayBuffer()), PNG);
 });
 
 test("same job and checksum is idempotent and does not create another R2 object", async () => {
