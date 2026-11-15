@@ -29,7 +29,7 @@ export const BUNDLE_RULES = [
 
 /** VITE_* names are public by design; secret-looking ones are always forbidden. */
 const SECRET_VITE_RE = /\bVITE_[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD|PASSWD|PRIVATE|CREDENTIAL)[A-Z0-9_]*\b/;
-const ALLOWED_VITE_VARS = new Set(["VITE_API_URL"]);
+const ALLOWED_VITE_VARS = new Set(["VITE_API_URL", "VITE_GOOGLE_CLIENT_ID"]);
 
 export function scanText(text, rules = BUNDLE_RULES) {
   const findings = [];

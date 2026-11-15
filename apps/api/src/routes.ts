@@ -8,6 +8,7 @@ import { auditIfChanged, auditStatement } from "./route-types.ts";
 import type { Ctx, Route } from "./route-types.ts";
 import { workerHealthRoutes } from "./worker-health.ts";
 import { workerRoutes } from "./worker-routes.ts";
+import { googleIdentityRoutes } from "./google-identity-routes.ts";
 import {
   ACCOUNT_ID_RE,
   ASPECT_RATIOS,
@@ -350,4 +351,4 @@ const ownerRoutes: Route[] = [
   { method: "GET", pattern: /^\/api\/audit$/, write: false, audience: "owner", handler: listAudit },
 ];
 
-export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...mediaRoutes, ...ownerRoutes, ...workerRoutes, ...workerHealthRoutes];
+export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...mediaRoutes, ...ownerRoutes, ...googleIdentityRoutes, ...workerRoutes, ...workerHealthRoutes];

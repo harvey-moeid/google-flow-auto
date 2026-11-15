@@ -4,7 +4,7 @@
  * and sends no Authorization header. Never add a token, key or secret here: everything in a PWA
  * bundle is public. The password is only ever sent to /api/login and is not kept after the call.
  */
-export type Account = { id: string; slot: number; label: string; email?: string | null; status: string };
+export type Account = { id: string; slot: number; label: string; email?: string | null; status: string; google_identity_verified_at?: string | null };
 export type WorkerStatus = {
   worker_id: string;
   state: "idle" | "busy" | "stopping";
@@ -65,6 +65,12 @@ const MESSAGES: Record<string, string> = {
   scenes_changed: "Scene berubah sejak Anda meninjau. Periksa ulang sebelum mengirim.",
   submit_blocked: "Project belum siap dikirim.",
   account_not_ready: "Akun belum berstatus Ready.",
+  google_identity_not_configured: "Google Identity belum dikonfigurasi di server.",
+  google_token_invalid: "Verifikasi Google gagal. Mulai enrollment baru.",
+  google_keys_unavailable: "Layanan verifikasi Google sedang tidak tersedia.",
+  enrollment_challenge_expired: "Tantangan enrollment kedaluwarsa atau sudah digunakan. Mulai ulang.",
+  google_identity_already_linked: "Identitas Google sudah ditautkan ke slot lain.",
+  google_identity_not_found: "Belum ada identitas Google pada slot ini.",
   job_not_found: "Job tidak ditemukan.",
   job_not_retryable: "Hanya job gagal atau dibatalkan yang bisa diulang.",
   job_not_cancellable: "Job sudah selesai.",
