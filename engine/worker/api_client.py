@@ -158,7 +158,7 @@ class WorkerApiClient:
 
     # ---------- Phase 6B: media upload ----------
 
-    async def upload_media(self, job_id: str, token: int, *, mime: str, sha256: str, data: bytes) -> dict:
+    async def upload_media(self, job_id: str, token: int, *, mime: str, sha256: str, data: bytes, width: int | None = None, height: int | None = None, duration_ms: int | None = None) -> dict:
         """POSTs one output file to /api/worker/jobs/:jobId/media. 201 = stored, 200 = idempotent replay.
 
         The lease is carried in headers (x-worker-id / x-fencing-token) because the body is the raw file.
@@ -171,6 +171,11 @@ class WorkerApiClient:
             "x-fencing-token": str(token),
             "x-content-sha256": sha256,
         }
+        if width is not None:
+            headers["x-media-width"] = str(width)
+            headers["x-media-height"] = str(height)
+        if duration_ms is not None:
+            headers["x-media-duration-ms"] = str(duration_ms)
         status, body = await self._upload_transport(f"/api/worker/jobs/{job_id}/media", data, headers)
         result = self._check(status, body)
         return result if isinstance(result, dict) else {}
