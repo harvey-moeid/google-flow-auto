@@ -31,6 +31,9 @@ const WORKER_BODY = { worker_id: "worker-1", fencing_token: 1 };
 const SAMPLES: Array<{ method: string; path: string; body?: unknown }> = [
   { method: "GET", path: "/api/me" },
   { method: "GET", path: "/api/accounts" },
+  { method: "POST", path: "/api/accounts/acct-01/google-identity/challenge" },
+  { method: "POST", path: "/api/accounts/acct-01/google-identity/verify", body: { challenge_id: UUID, credential: "x".repeat(100) } },
+  { method: "POST", path: "/api/accounts/acct-01/google-identity/unlink", body: { confirm: true } },
   { method: "PATCH", path: "/api/accounts/acct-01", body: { label: "Hacked" } },
   { method: "GET", path: "/api/projects" },
   { method: "POST", path: "/api/projects", body: { name: "Hacked" } },
