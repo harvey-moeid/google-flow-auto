@@ -35,13 +35,16 @@ async function fixture() {
   return { h, bucket, jobId };
 }
 
-async function upload(h: Awaited<ReturnType<typeof createHarness>>, jobId: string, bytes: Uint8Array, checksum = createHash("sha256").update(bytes).digest("hex")) {
+async function upload(h: Awaited<ReturnType<typeof createHarness>>, jobId: string, bytes: Uint8Array, checksum = createHash("sha256").update(bytes).digest("hex"), metadata: { width?: number; height?: number; duration_ms?: number } = {}) {
   const headers = new Headers({
     "content-type": "image/png",
     "x-worker-id": "worker-test",
     "x-fencing-token": "1",
     "x-content-sha256": checksum,
   });
+  if (metadata.width !== undefined) headers.set("x-media-width", String(metadata.width));
+  if (metadata.height !== undefined) headers.set("x-media-height", String(metadata.height));
+  if (metadata.duration_ms !== undefined) headers.set("x-media-duration-ms", String(metadata.duration_ms));
   const request = buildRequest({
     method: "POST",
     path: `/api/worker/jobs/${jobId}/media`,
@@ -139,4 +142,27 @@ test("lease lost during R2 write cannot publish a media row and the orphan objec
   assert.equal(result.json.error.code, "lease_lost");
   assert.equal(bucket.objects.size, 0);
   assert.equal(h.db.raw.prepare("SELECT COUNT(*) AS n FROM media").get()?.n, 0);
+});
+
+test("trusted dimensions and duration metadata are stored and returned to the owner", async () => {
+  const { h, jobId } = await fixture();
+  const result = await upload(h, jobId, PNG, undefined, { width: 1920, height: 1080 });
+  assert.equal(result.status, 201, result.text);
+  assert.equal(result.json.width, 1920);
+  assert.equal(result.json.height, 1080);
+  assert.equal(result.json.duration_ms, null);
+  const listed = await authed(h, { path: `/api/jobs/${jobId}/media` });
+  assert.equal(listed.json.items[0].width, 1920);
+  assert.equal(listed.json.items[0].height, 1080);
+});
+
+test("media metadata rejects partial dimensions, out-of-range values and image duration", async () => {
+  const { h, jobId } = await fixture();
+  const partial = await upload(h, jobId, PNG, undefined, { width: 1920 });
+  assert.equal(partial.status, 400);
+  assert.equal(partial.json.error.code, "invalid_media_metadata");
+  const tooLarge = await upload(h, jobId, PNG, undefined, { width: 20000, height: 100 });
+  assert.equal(tooLarge.status, 400);
+  const duration = await upload(h, jobId, PNG, undefined, { duration_ms: 1000 });
+  assert.equal(duration.status, 400);
 });

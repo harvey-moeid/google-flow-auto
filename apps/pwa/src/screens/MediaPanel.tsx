@@ -125,6 +125,8 @@ export function MediaPanel({ jobId, status }: { jobId: string; status: string })
                 </b>
                 <small>
                   {item.mime} · {formatBytes(item.size_bytes)}
+                  {item.width && item.height ? ` · ${item.width}×${item.height}` : ""}
+                  {item.duration_ms ? ` · ${(item.duration_ms / 1000).toFixed(1)} dtk` : ""}
                 </small>
               </span>
               <span className="row">

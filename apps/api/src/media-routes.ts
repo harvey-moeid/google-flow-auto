@@ -7,6 +7,8 @@ import { WORKER_ID_RE } from "./validate.ts";
 
 // Buffering is required for WebCrypto SHA-256; keep the one-shot Worker request below a safe memory ceiling.
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+const MAX_DIMENSION = 16_384;
+const MAX_DURATION_MS = 86_400_000;
 const MIME_EXT: Record<string, string> = {
   "video/mp4": "mp4",
   "video/webm": "webm",
@@ -28,6 +30,9 @@ interface MediaRow {
   mime: string;
   size_bytes: number;
   sha256: string;
+  width: number | null;
+  height: number | null;
+  duration_ms: number | null;
   r2_key: string;
   created_at: string;
 }
@@ -43,6 +48,27 @@ function validSignature(mime: string, bytes: Uint8Array): boolean {
   if (mime === "video/webm") return bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
   if (mime === "video/mp4") return bytes.length >= 12 && String.fromCharCode(...bytes.slice(4,8)) === "ftyp";
   return false;
+}
+
+function optionalIntegerHeader(ctx: Ctx, name: string, max: number): number | null {
+  const raw = ctx.req.headers.get(name);
+  if (raw === null || raw === "") return null;
+  if (!/^\d+$/.test(raw)) throw new HttpError(400, "invalid_media_metadata", "Media metadata is invalid");
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > max) {
+    throw new HttpError(400, "invalid_media_metadata", "Media metadata is outside the supported range");
+  }
+  return value;
+}
+
+function readMediaMetadata(ctx: Ctx, mime: string) {
+  const width = optionalIntegerHeader(ctx, "x-media-width", MAX_DIMENSION);
+  const height = optionalIntegerHeader(ctx, "x-media-height", MAX_DIMENSION);
+  const durationMs = optionalIntegerHeader(ctx, "x-media-duration-ms", MAX_DURATION_MS);
+  if ((width === null) !== (height === null) || (mime.startsWith("image/") && durationMs !== null)) {
+    throw new HttpError(400, "invalid_media_metadata", "Media metadata fields are inconsistent");
+  }
+  return { width, height, duration_ms: durationMs };
 }
 
 async function readBoundedBody(ctx: Ctx): Promise<Uint8Array> {
@@ -86,18 +112,13 @@ async function uploadMedia(ctx: Ctx): Promise<Response> {
   const job = await jobInfo(ctx.env.DB, jobId);
   if (!job) throw new HttpError(404, "job_not_found", "Job not found");
   const lease = await leaseState(ctx.env.DB, jobId);
-  if (
-    job.status !== "running" ||
-    job.worker_id !== workerId ||
-    job.lease_token !== token ||
-    !lease ||
-    lease.expires_at <= ctx.now()
-  ) {
+  if (job.status !== "running" || job.worker_id !== workerId || job.lease_token !== token || !lease || lease.expires_at <= ctx.now()) {
     throw new HttpError(409, "lease_lost", "The worker no longer holds the active job lease");
   }
 
   const mime = (ctx.req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   if (!Object.hasOwn(MIME_EXT, mime)) throw new HttpError(415, "unsupported_media_type", "Media type is not supported");
+  const metadata = readMediaMetadata(ctx, mime);
   const checksum = (ctx.req.headers.get("x-content-sha256") ?? "").toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(checksum)) throw new HttpError(400, "invalid_checksum", "A SHA-256 checksum header is required");
 
@@ -106,11 +127,12 @@ async function uploadMedia(ctx: Ctx): Promise<Response> {
   if (digest !== checksum) throw new HttpError(400, "checksum_mismatch", "Media checksum does not match the uploaded bytes");
   if (!validSignature(mime, bytes)) throw new HttpError(415, "media_signature_mismatch", "Media bytes do not match the declared content type");
 
-  const existing = await ctx.env.DB.prepare(
-    "SELECT id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,r2_key,created_at FROM media WHERE job_id=? AND sha256=?",
-  ).bind(jobId, digest).first<MediaRow>();
+  const columns = "id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,width,height,duration_ms,r2_key,created_at";
+  const existing = await ctx.env.DB.prepare(`SELECT ${columns} FROM media WHERE job_id=? AND sha256=?`)
+    .bind(jobId, digest).first<MediaRow>();
   if (existing) {
-    if (existing.mime !== mime || existing.size_bytes !== bytes.length) {
+    if (existing.mime !== mime || existing.size_bytes !== bytes.length ||
+        existing.width !== metadata.width || existing.height !== metadata.height || existing.duration_ms !== metadata.duration_ms) {
       throw new HttpError(409, "media_replay_conflict", "The checksum already exists with different media metadata");
     }
     return jsonResponse({ ...publicMedia(existing), idempotent_replay: true }, 200);
@@ -130,34 +152,32 @@ async function uploadMedia(ctx: Ctx): Promise<Response> {
   });
 
   try {
-    // The lease check and metadata insert are one D1 statement: a lease cannot expire/be fenced
-    // between an application-level check and publishing the object reference.
     const results = await ctx.env.DB.batch([
       ctx.env.DB.prepare(
-        `INSERT INTO media(id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,r2_key)
-         SELECT ?,?,?,?,?,?,?,?,?
+        `INSERT INTO media(id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,width,height,duration_ms,r2_key)
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,?
           WHERE EXISTS (
             SELECT 1 FROM jobs j JOIN global_lease l
               ON l.name='global' AND l.job_id=j.id AND l.holder_id=j.worker_id AND l.fencing_token=j.lease_token
            WHERE j.id=? AND j.status='running' AND j.worker_id=? AND j.lease_token=? AND l.expires_at>?
           )`,
-      ).bind(id, jobId, context.project_id, context.scene_id, kind, mime, bytes.length, digest, key, jobId, workerId, token, ctx.now()),
+      ).bind(id, jobId, context.project_id, context.scene_id, kind, mime, bytes.length, digest,
+        metadata.width, metadata.height, metadata.duration_ms, key, jobId, workerId, token, ctx.now()),
       ctx.env.DB.prepare(
         "INSERT INTO audit_events(id,account_id,job_id,event_type,detail_json) SELECT ?,NULL,?,'media.uploaded',? WHERE changes()>0",
-      ).bind(
-        crypto.randomUUID(),
-        jobId,
-        JSON.stringify({ actor: actorOf(ctx.identity), request_id: ctx.requestId, media_id: id, mime, size_bytes: bytes.length, sha256: digest }),
-      ),
+      ).bind(crypto.randomUUID(), jobId, JSON.stringify({
+        actor: actorOf(ctx.identity), request_id: ctx.requestId, media_id: id, mime,
+        size_bytes: bytes.length, sha256: digest, ...metadata,
+      })),
     ]);
     if (results[0].meta.changes !== 1) throw new HttpError(409, "lease_lost", "The worker lease expired during upload");
   } catch (error) {
     await ctx.env.MEDIA.delete(key).catch(() => undefined);
     if (isUniqueViolation(error)) {
-      const raced = await ctx.env.DB.prepare(
-        "SELECT id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,r2_key,created_at FROM media WHERE job_id=? AND sha256=?",
-      ).bind(jobId, digest).first<MediaRow>();
-      if (raced && raced.mime === mime && raced.size_bytes === bytes.length) {
+      const raced = await ctx.env.DB.prepare(`SELECT ${columns} FROM media WHERE job_id=? AND sha256=?`)
+        .bind(jobId, digest).first<MediaRow>();
+      if (raced && raced.mime === mime && raced.size_bytes === bytes.length &&
+          raced.width === metadata.width && raced.height === metadata.height && raced.duration_ms === metadata.duration_ms) {
         return jsonResponse({ ...publicMedia(raced), idempotent_replay: true }, 200);
       }
       if (raced) throw new HttpError(409, "media_replay_conflict", "The checksum already exists with different media metadata");
@@ -168,14 +188,15 @@ async function uploadMedia(ctx: Ctx): Promise<Response> {
 
   return jsonResponse({
     id, job_id: jobId, project_id: context.project_id, scene_id: context.scene_id,
-    kind, mime, size_bytes: bytes.length, sha256: digest,
+    kind, mime, size_bytes: bytes.length, sha256: digest, ...metadata,
   }, 201);
 }
 
 function publicMedia(row: MediaRow) {
   return {
     id: row.id, job_id: row.job_id, project_id: row.project_id, scene_id: row.scene_id,
-    kind: row.kind, mime: row.mime, size_bytes: row.size_bytes, sha256: row.sha256, created_at: row.created_at,
+    kind: row.kind, mime: row.mime, size_bytes: row.size_bytes, sha256: row.sha256,
+    width: row.width, height: row.height, duration_ms: row.duration_ms, created_at: row.created_at,
   };
 }
 
@@ -184,7 +205,7 @@ async function listJobMedia(ctx: Ctx): Promise<Response> {
   const job = await ctx.env.DB.prepare("SELECT id FROM jobs WHERE id=?").bind(jobId).first();
   if (!job) throw new HttpError(404, "job_not_found", "Job not found");
   const { results } = await ctx.env.DB.prepare(
-    "SELECT id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,r2_key,created_at FROM media WHERE job_id=? ORDER BY created_at,id",
+    "SELECT id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,width,height,duration_ms,r2_key,created_at FROM media WHERE job_id=? ORDER BY created_at,id",
   ).bind(jobId).all<MediaRow>();
   return jsonResponse({ items: results.map(publicMedia) });
 }
