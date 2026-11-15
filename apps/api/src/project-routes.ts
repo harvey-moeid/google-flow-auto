@@ -1,4 +1,5 @@
 import { HttpError, jsonResponse, readJsonObject } from "./http.ts";
+import { deleteObjects } from "./asset-store.ts";
 import { isUniqueViolation, page, parsePagination } from "./paging.ts";
 import { auditStatement } from "./route-types.ts";
 import type { Ctx, Route } from "./route-types.ts";
@@ -61,13 +62,13 @@ async function loadProject(ctx: Ctx, id: string): Promise<ProjectRow> {
   return project;
 }
 
-function requireEditable(project: { status: string }): void {
+export function requireEditable(project: { status: string }): void {
   if (project.status === "archived") {
     throw new HttpError(409, "project_archived", "Archived projects cannot be changed; restore the project first");
   }
 }
 
-async function hasActiveJob(ctx: Ctx, column: "scene_id" | "project_id", id: string): Promise<boolean> {
+export async function hasActiveJob(ctx: Ctx, column: "scene_id" | "project_id", id: string): Promise<boolean> {
   const row = await ctx.env.DB.prepare(`SELECT 1 AS busy FROM jobs WHERE ${column}=? AND ${ACTIVE_JOB} LIMIT 1`)
     .bind(id)
     .first();
@@ -116,6 +117,7 @@ async function getProject(ctx: Ctx): Promise<Response> {
   const project = await loadProject(ctx, id);
   const { results } = await ctx.env.DB.prepare(
     `SELECT s.id,s.scene_order,s.prompt,s.duration_seconds,s.created_at,s.updated_at,
+            (SELECT COUNT(*) FROM scene_assets a WHERE a.scene_id=s.id) AS asset_count,
             (SELECT j.id FROM jobs j WHERE j.scene_id=s.id ORDER BY j.created_at DESC, j.rowid DESC LIMIT 1) AS last_job_id,
             (SELECT j.status FROM jobs j WHERE j.scene_id=s.id ORDER BY j.created_at DESC, j.rowid DESC LIMIT 1) AS last_job_status
        FROM scenes s WHERE s.project_id=? ORDER BY s.scene_order`,
@@ -128,6 +130,7 @@ async function getProject(ctx: Ctx): Promise<Response> {
       duration_seconds: number;
       created_at: string;
       updated_at: string;
+      asset_count: number;
       last_job_id: string | null;
       last_job_status: string | null;
     }>();
@@ -244,7 +247,7 @@ async function createScene(ctx: Ctx): Promise<Response> {
   return jsonResponse(scene, 201);
 }
 
-async function loadScene(ctx: Ctx, id: string): Promise<SceneRow & { project_status: string }> {
+export async function loadScene(ctx: Ctx, id: string): Promise<SceneRow & { project_status: string }> {
   const scene = await ctx.env.DB.prepare(
     `SELECT s.id,s.project_id,s.scene_order,s.prompt,s.duration_seconds,s.created_at,s.updated_at,
             p.status AS project_status
@@ -312,12 +315,21 @@ async function deleteScene(ctx: Ctx): Promise<Response> {
   if (await hasActiveJob(ctx, "scene_id", id)) {
     throw new HttpError(409, "scene_locked", "The scene has a job that is queued or running");
   }
+  // The asset rows cascade with the scene; their R2 objects must be removed explicitly afterwards.
+  const { results: assets } = await ctx.env.DB.prepare("SELECT r2_key FROM scene_assets WHERE scene_id=?")
+    .bind(id)
+    .all<{ r2_key: string }>();
   // Finished jobs stay in the history (jobs.scene_id becomes NULL through the foreign key).
   await ctx.env.DB.batch([
     ctx.env.DB.prepare("DELETE FROM scenes WHERE id=?").bind(id),
     touchProject(ctx, scene.project_id),
     auditStatement(ctx, "scene.deleted", {}, { project_id: scene.project_id, scene_id: id }),
   ]);
+  await deleteObjects(
+    ctx.env,
+    assets.map((asset) => asset.r2_key),
+    ctx.requestId,
+  );
   return jsonResponse({ id, deleted: true });
 }
 
