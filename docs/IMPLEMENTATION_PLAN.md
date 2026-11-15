@@ -19,7 +19,7 @@ Verified baseline (2026-11-15): see current main branch and GitHub Actions. No l
 - Storage: R2 bucket is private; owner media reads go through the authenticated Worker API. No public object URLs.
 
 ## Android enrollment status
-**Identity enrollment can be implemented without VPS. Automated Flow authentication cannot.** GIS proves the selected Google identity and links it to a slot. The slot must not become `ready` for Playwright jobs from this proof alone. The existing terminal-based Playwright enrollment remains unavailable without a persistent worker host.
+**Android identity enrollment is implemented on the feature branch; production setup and real-device verification remain pending.** GIS proves the selected Google identity and links it to a slot. The slot must not become `ready` for Playwright jobs from this proof alone. The existing terminal-based Playwright enrollment remains unavailable without a persistent worker host.
 
 ## Phase progress
 | Phase | Status | Evidence / remaining work |
@@ -30,7 +30,7 @@ Verified baseline (2026-11-15): see current main branch and GitHub Actions. No l
 | 4C | Implemented | Android worker monitoring and manual enrollment runbook. |
 | 4D | Implemented | Host lock, profile isolation audit, marker and systemd template; real-host verification remains. |
 | 4E | Implemented | Encrypted local backup/restore CLI; separate-host restore and encrypted-volume proof remain owner-run. |
-| 4F Android identity enrollment | **Design only** | Add GIS client, D1 identity/challenge migration, server-side ID-token verification, owner API, PWA UI, replay/security tests, Android E2E. |
+| 4F Android identity enrollment | **Implemented on feature branch; staging pending** | GIS client, D1 migration 0007, server-side JWKS/ID-token validation, owner API, PWA UI, one-time nonce/replay checks, identity lifecycle tests; configure OAuth client and verify on Android. |
 | 4G Flow session authorization | **Blocked** | Requires a documented/permitted Flow API or an approved persistent browser execution environment. No VPS is currently allowed. |
 | 5 | Qualification gate / blocked | FLOW KIT and gflow-cli do not currently meet documented/permitted-interface requirements. Only dry-run is functional. |
 | 6 | Media pipeline in progress | Review current PRs and run staging verification; see repository docs and open PRs. |
