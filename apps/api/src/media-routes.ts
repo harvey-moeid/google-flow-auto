@@ -1,10 +1,12 @@
 import { HttpError, jsonResponse } from "./http.ts";
 import { jobInfo, leaseState } from "./queue.ts";
-import { actorOf, auditStatement } from "./route-types.ts";
+import { actorOf } from "./route-types.ts";
+import { isUniqueViolation } from "./paging.ts";
 import type { Ctx, Route } from "./route-types.ts";
 import { WORKER_ID_RE } from "./validate.ts";
 
-const MAX_MEDIA_BYTES = 90 * 1024 * 1024;
+// Buffering is required for WebCrypto SHA-256; keep the one-shot Worker request below a safe memory ceiling.
+const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const MIME_EXT: Record<string, string> = {
   "video/mp4": "mp4",
   "video/webm": "webm",
@@ -128,28 +130,38 @@ async function uploadMedia(ctx: Ctx): Promise<Response> {
   });
 
   try {
-    // Re-check the fencing lease after the R2 write. A late/stale worker must not publish metadata.
-    const current = await jobInfo(ctx.env.DB, jobId);
-    const currentLease = await leaseState(ctx.env.DB, jobId);
-    if (
-      current?.status !== "running" ||
-      current.worker_id !== workerId ||
-      current.lease_token !== token ||
-      !currentLease ||
-      currentLease.expires_at <= ctx.now()
-    ) {
-      throw new HttpError(409, "lease_lost", "The worker lease expired during upload");
-    }
-    await ctx.env.DB.batch([
+    // The lease check and metadata insert are one D1 statement: a lease cannot expire/be fenced
+    // between an application-level check and publishing the object reference.
+    const results = await ctx.env.DB.batch([
       ctx.env.DB.prepare(
-        "INSERT INTO media(id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,r2_key) VALUES(?,?,?,?,?,?,?,?,?)",
-      ).bind(id, jobId, context.project_id, context.scene_id, kind, mime, bytes.length, digest, key),
-      auditStatement(ctx, "media.uploaded", { job_id: jobId }, {
-        media_id: id, mime, size_bytes: bytes.length, sha256: digest, actor: actorOf(ctx.identity),
-      }),
+        `INSERT INTO media(id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,r2_key)
+         SELECT ?,?,?,?,?,?,?,?,?
+          WHERE EXISTS (
+            SELECT 1 FROM jobs j JOIN global_lease l
+              ON l.name='global' AND l.job_id=j.id AND l.holder_id=j.worker_id AND l.fencing_token=j.lease_token
+           WHERE j.id=? AND j.status='running' AND j.worker_id=? AND j.lease_token=? AND l.expires_at>?
+          )`,
+      ).bind(id, jobId, context.project_id, context.scene_id, kind, mime, bytes.length, digest, key, jobId, workerId, token, ctx.now()),
+      ctx.env.DB.prepare(
+        "INSERT INTO audit_events(id,account_id,job_id,event_type,detail_json) SELECT ?,NULL,?,'media.uploaded',? WHERE changes()>0",
+      ).bind(
+        crypto.randomUUID(),
+        jobId,
+        JSON.stringify({ actor: actorOf(ctx.identity), request_id: ctx.requestId, media_id: id, mime, size_bytes: bytes.length, sha256: digest }),
+      ),
     ]);
+    if (results[0].meta.changes !== 1) throw new HttpError(409, "lease_lost", "The worker lease expired during upload");
   } catch (error) {
     await ctx.env.MEDIA.delete(key).catch(() => undefined);
+    if (isUniqueViolation(error)) {
+      const raced = await ctx.env.DB.prepare(
+        "SELECT id,job_id,project_id,scene_id,kind,mime,size_bytes,sha256,r2_key,created_at FROM media WHERE job_id=? AND sha256=?",
+      ).bind(jobId, digest).first<MediaRow>();
+      if (raced && raced.mime === mime && raced.size_bytes === bytes.length) {
+        return jsonResponse({ ...publicMedia(raced), idempotent_replay: true }, 200);
+      }
+      if (raced) throw new HttpError(409, "media_replay_conflict", "The checksum already exists with different media metadata");
+    }
     if (error instanceof HttpError) throw error;
     throw error;
   }

@@ -115,3 +115,28 @@ test("owner and worker audiences remain isolated for media endpoints", async () 
   const workerDownload = await send(h, buildRequest({ path: `/api/media/11111111-2222-4333-8444-555555555555`, bearer: WORKER_TOKEN }));
   assert.equal(workerDownload.status, 403);
 });
+test("lease lost during R2 write cannot publish a media row and the orphan object is deleted", async () => {
+  const bucket = fakeBucket();
+  const h = await createHarness({ MEDIA: {
+    ...bucket,
+    async put(key: string, value: Uint8Array) {
+      await bucket.put(key, value);
+      h.db.raw.prepare("UPDATE global_lease SET expires_at=? WHERE name='global'").run(h.clock.now);
+    },
+  } });
+  makeAccountReady(h);
+  const projectId = await createProject(h);
+  const queued = await authed(h, {
+    method: "POST", path: "/api/jobs",
+    body: { project_id: projectId, account_id: "acct-01", idempotency_key: "media-race-0001" },
+  });
+  const jobId = queued.json.id as string;
+  h.db.raw.prepare("UPDATE jobs SET status='running',worker_id='worker-test',lease_token=1 WHERE id=?").run(jobId);
+  h.db.raw.prepare("UPDATE global_lease SET holder_id='worker-test',job_id=?,fencing_token=1,expires_at=? WHERE name='global'")
+    .run(jobId, h.clock.now + 60_000);
+  const result = await upload(h, jobId, PNG);
+  assert.equal(result.status, 409);
+  assert.equal(result.json.error.code, "lease_lost");
+  assert.equal(bucket.objects.size, 0);
+  assert.equal(h.db.raw.prepare("SELECT COUNT(*) AS n FROM media").get()?.n, 0);
+});
