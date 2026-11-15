@@ -102,7 +102,9 @@ def _write_archive(profiles_root: Path, archive_path: Path) -> None:
                         raise ProfileBackupError("Symlinks inside profiles are not allowed in backups")
                 for name in files:
                     path = base / name
-                    if path.is_symlink() or not path.is_file():
+                    if path.is_symlink():
+                        raise ProfileBackupError("Symlinks inside profiles are not allowed in backups")
+                    if not path.is_file():
                         raise ProfileBackupError("Non-regular profile entries are not allowed in backups")
                     archive.write(path, path.relative_to(profiles_root.parent).as_posix())
 
