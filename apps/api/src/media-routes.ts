@@ -3,6 +3,7 @@ import { jobInfo, leaseState } from "./queue.ts";
 import { actorOf } from "./route-types.ts";
 import { isUniqueViolation } from "./paging.ts";
 import type { Ctx, Route } from "./route-types.ts";
+import { mediaDeleteRoutes } from "./media-delete.ts";
 import { WORKER_ID_RE } from "./validate.ts";
 
 // Buffering is required for WebCrypto SHA-256; keep the one-shot Worker request below a safe memory ceiling.
@@ -231,4 +232,5 @@ export const mediaRoutes: Route[] = [
   { method: "POST", pattern: workerUploadPath, write: true, audience: "worker", handler: uploadMedia },
   { method: "GET", pattern: jobMediaPath, write: false, audience: "owner", handler: listJobMedia },
   { method: "GET", pattern: mediaPath, write: false, audience: "owner", handler: downloadMedia },
+  ...mediaDeleteRoutes,
 ];
