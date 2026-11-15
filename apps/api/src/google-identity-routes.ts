@@ -53,7 +53,7 @@ async function verifyToken(token: string, clientId: string, nonceHash: string, n
   typeof claims.exp !== "number" || claims.exp <= nowS ||
   typeof claims.iat !== "number" || claims.iat > nowS + 60 || claims.iat < nowS - 3600 ||
   typeof claims.sub !== "string" || !claims.sub || claims.sub.length > 255 ||
-  typeof claims.email !== "string" || claims.email.length > 254 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(claims.email) || !emailVerified ||
+  typeof claims.email !== "string" || claims.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(claims.email) || !emailVerified ||
   typeof claims.nonce !== "string" || await hash(claims.nonce) !== nonceHash) {
   throw new HttpError(401, "google_token_invalid", "Google identity token is invalid or does not match this enrollment");
  }
@@ -90,9 +90,9 @@ async function verify(ctx: Ctx): Promise<Response> {
  try {
   const results = await ctx.env.DB.batch([
    ctx.env.DB.prepare("UPDATE account_enrollment_challenges SET consumed_at=? WHERE id=? AND account_id=? AND consumed_at IS NULL AND expires_at>datetime(?/1000,'unixepoch')").bind(verifiedAt, challengeId, accountId, ctx.now()),
-   ctx.env.DB.prepare("INSERT INTO account_google_identities(account_id,google_sub,email,verified_at) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM account_enrollment_challenges WHERE id=? AND account_id=? AND consumed_at=?)").bind(accountId, identity.sub, identity.email, verifiedAt, challengeId, accountId, verifiedAt),
+   ctx.env.DB.prepare("INSERT INTO account_google_identities(account_id,google_sub,email,verified_at) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM account_enrollment_challenges WHERE id=? AND account_id=? AND consumed_at=?) ON CONFLICT(account_id) DO UPDATE SET google_sub=excluded.google_sub,email=excluded.email,verified_at=excluded.verified_at,updated_at=CURRENT_TIMESTAMP").bind(accountId, identity.sub, identity.email, verifiedAt, challengeId, accountId, verifiedAt),
    ctx.env.DB.prepare("UPDATE accounts SET email=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND EXISTS (SELECT 1 FROM account_google_identities WHERE account_id=? AND google_sub=?)").bind(identity.email, accountId, accountId, identity.sub),
-   auditStatement(ctx, "account.google_identity.verified", { account_id: accountId }, {}),
+   ctx.env.DB.prepare("INSERT INTO audit_events(id,account_id,event_type,detail_json) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM account_google_identities WHERE account_id=? AND google_sub=?)").bind(crypto.randomUUID(), accountId, "account.google_identity.verified", JSON.stringify({ actor: "owner", request_id: ctx.requestId }), accountId, identity.sub),
   ]);
   if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1) throw new HttpError(409, "enrollment_challenge_expired", "Enrollment challenge expired or was already used");
  } catch (error) {
