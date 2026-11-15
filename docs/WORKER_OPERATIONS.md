@@ -26,7 +26,7 @@ Mode default tanpa --serve atau --once hanya menjalankan satu job lokal; ia tida
 
 ## Enrollment manual satu akun
 
-1. Hentikan proses --serve dengan Ctrl+C. Jangan membuka profil yang sama dari dua proses Chromium.
+1. Pastikan tidak ada job aktif. Hentikan proses --serve dengan Ctrl+C dan tunggu shutdown selesai. Jangan membuka profil yang sama dari dua proses Chromium.
 2. Jalankan satu akun yang dipilih, misalnya:
 
        python -m worker.main --enroll acct-01

@@ -69,7 +69,7 @@ export function WorkerOperations({ account }: { account: Account }) {
             </div>
             <div className="worker-meta">
               <span><HardDrive size={13} /> {formatBytes(worker.disk_free_bytes)} kosong / {formatBytes(worker.disk_total_bytes)}</span>
-              <span className={worker.disk_low ? "worker-warning" : ""}>{worker.disk_low ? "Disk rendah" : "Disk normal"}</span>
+              <span className={worker.disk_free_bytes === null ? "" : worker.disk_low ? "worker-warning" : ""}>{worker.disk_free_bytes === null ? "Disk tidak diketahui" : worker.disk_low ? "Disk rendah" : "Disk normal"}</span>
             </div>
             <small className="muted">Heartbeat: {formatTime(worker.last_seen_at)}</small>
           </article>
@@ -86,7 +86,7 @@ export function WorkerOperations({ account }: { account: Account }) {
         </p>
         <div className="notice">
           <b>1. Hentikan worker queue terlebih dahulu.</b>
-          <p>Di terminal host worker, tekan Ctrl+C pada proses --serve. Jangan membuka satu profil Chromium dari dua proses sekaligus.</p>
+          <p>Pastikan tidak ada job aktif, lalu tekan Ctrl+C pada proses --serve. Tunggu proses berhenti. Jangan membuka satu profil Chromium dari dua proses sekaligus.</p>
         </div>
         <div className="command-block">
           <div><Terminal size={14} /> Jalankan dari folder engine</div>
