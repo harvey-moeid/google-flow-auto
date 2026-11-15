@@ -72,6 +72,7 @@ const SAMPLES: Array<{ method: string; path: string; body?: unknown }> = [
   { method: "POST", path: `/api/worker/jobs/${UUID}/media` },
   { method: "GET", path: `/api/jobs/${UUID}/media` },
   { method: "GET", path: `/api/media/${UUID}` },
+  { method: "POST", path: `/api/media/${UUID}/delete` },
   { method: "GET", path: "/api/workers" },
   { method: "POST", path: "/api/worker/status", body: { worker_id: "worker-1", state: "idle", profile_count: 0 } },
   {
