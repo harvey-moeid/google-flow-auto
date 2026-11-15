@@ -10,6 +10,8 @@ export const ERROR_CODE_RE = /^[a-z][a-z0-9_]{1,63}$/;
 /** Object key of a result in private storage (Phase 6). No leading slash, no `..` segments. */
 export const RESULT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
 const CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/;
+/** Same as above but tab, line feed and carriage return are allowed (multi-line prompts). */
+const CONTROL_CHARS_MULTILINE_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 export interface Issue {
   field: string;
@@ -40,6 +42,8 @@ interface StringRules {
   min?: number;
   max: number;
   pattern?: RegExp;
+  /** Allow tab / line breaks inside the value (prompts). Other control characters stay rejected. */
+  multiline?: boolean;
 }
 
 /** Reads an optional/required string field; returns the trimmed value or undefined. */
@@ -67,7 +71,7 @@ export function readString(
     issues.add(key, "too_long");
     return undefined;
   }
-  if (CONTROL_CHARS_RE.test(value)) {
+  if ((rules.multiline ? CONTROL_CHARS_MULTILINE_RE : CONTROL_CHARS_RE).test(value)) {
     issues.add(key, "invalid_characters");
     return undefined;
   }
@@ -173,3 +177,44 @@ export const JOB_STATUSES = [
   "failed",
   "cancelled",
 ] as const;
+
+export const PROJECT_STATUSES = ["draft", "archived"] as const;
+
+/** Hard limits for a project; also enforced by a database trigger (scenes). */
+export const MAX_SCENES_PER_PROJECT = 50;
+export const PROMPT_MAX_LENGTH = 2000;
+/** Generic bounds only: the real per-engine limits are unverified until Phase 5. */
+export const SCENE_DURATION_MIN_S = 1;
+export const SCENE_DURATION_MAX_S = 60;
+
+/** Reads a required list of unique UUIDs (1..max). */
+export function readUuidList(
+  body: Record<string, unknown>,
+  key: string,
+  max: number,
+  issues: Issues,
+): string[] | undefined {
+  const raw = body[key];
+  if (raw === undefined) {
+    issues.add(key, "required");
+    return undefined;
+  }
+  if (!Array.isArray(raw)) {
+    issues.add(key, "must_be_array");
+    return undefined;
+  }
+  if (raw.length < 1 || raw.length > max) {
+    issues.add(key, "out_of_range");
+    return undefined;
+  }
+  if (!raw.every((item) => typeof item === "string" && UUID_RE.test(item))) {
+    issues.add(key, "invalid_format");
+    return undefined;
+  }
+  const values = (raw as string[]).map((item) => item.toLowerCase());
+  if (new Set(values).size !== values.length) {
+    issues.add(key, "duplicate_value");
+    return undefined;
+  }
+  return values;
+}
