@@ -1,10 +1,11 @@
 # Cloudflare Pages response headers for the PWA (static assets contain no secrets).
+# Google Identity Services requires its hosted script, iframe, and network endpoints.
 # connect-src 'self' assumes the API is served same-origin under /api (the documented setup).
 # If you point VITE_API_URL at another origin, add that origin to connect-src.
 # blob: in img-src/media-src is for the owner-only media preview: files are fetched with the session
 # cookie and shown from in-memory object URLs. No remote image/media origin is allowed.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.googleusercontent.com; media-src 'self' blob:; connect-src 'self' https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Strict-Transport-Security: max-age=31536000; includeSubDomains
