@@ -3,7 +3,7 @@
 Repository: harvey-moeid/google-flow-auto  
 Product target: Android-first PWA control plane for 10 manually managed Google Flow account slots.  
 Fixed decisions: manual account enrollment and selection, one global sequential execution lane, hybrid architecture, free-first deployment.  
-Verified baseline (2026-11-15): main `c1c7dc2a531fdbbfc827f9ca35d37e7b4eb6d61f`; Phase 6A merged by PR #19; main Test run #57 (`43683700717`) passed. No deployment was performed and no live adapter is enabled.
+Verified baseline (2026-11-15): main `67b3ab7671ab018a2579dd131fecbd665e3cdaca`; Phase 6A and Phase 6B steps 1–3 merged; main Test run #69 (`43686179796`) passed. PR #25 (media delete) is open. No deployment was performed and no live adapter is enabled.
 
 ## Product and architecture decisions
 - PWA: React + TypeScript + Vite, installable from Android Chrome.
@@ -28,7 +28,7 @@ Verified baseline (2026-11-15): main `c1c7dc2a531fdbbfc827f9ca35d37e7b4eb6d61f`;
 | 4 operational exit | BLOCKED — owner-run | Encrypted disk, service lifecycle, profile persistence/isolation, kill recovery, separate-host restore and real D1/API staging smoke not evidenced. |
 | 5 | Qualification gate / BLOCKED | FLOW KIT and gflow-cli do not currently meet documented/permitted-interface requirements. Only dry-run is functional. |
 | 6A | Merged — API foundation | PR #19: private R2 upload, D1 metadata, owner-only list/download, SHA-256 and file signature validation, lease fencing and tests. One-shot upload cap 25 MiB. |
-| 6B | In progress | Steps 1–2 merged; step 3 implemented in open PR #24 (optional metadata); resumable uploads, retention/deletion/orphan cleanup and staging verification remain. |
+| 6B | In progress | Steps 1–3 merged (PR #21 worker upload, PR #22 PWA media panel, PR #24 metadata). Step 4a (owner delete) in open PR #25. Remaining: PWA delete control, orphan detection (dry-run), retention decision, resumable uploads, staging verification. |
 | 7 | Not started | Production hardening, backups, Android E2E, staging and release. |
 
 ## Phase 4 — Browser worker and account lifecycle
@@ -67,15 +67,16 @@ Phase 4 exit: all ten profiles remain isolated and recoverable through restart; 
 - [ ] Remote D1 migration and R2 binding verified in an authorized staging environment.
 
 ### Phase 6B — End-to-end media lifecycle (in progress)
-- [ ] Python worker uploads generated outputs before marking a job succeeded.
-- [ ] Worker handles upload retry and checksum idempotency without completing a job whose output has not been persisted.
-- [ ] PWA shows media per job/project with preview, size/type and authenticated download.
-- [x] Implement optional width/height/duration metadata with bounds validation and owner UI display (PR #24 open; metadata is adapter/worker-supplied, not extracted from file bytes).
-- [ ] Add authorized delete and retention policy; audit all deletes.
-- [ ] Add orphan detection/cleanup with dry-run mode and explicit retention safety.
-- [ ] Add resumable/multipart upload path for media larger than 25 MiB.
+- [x] Python worker uploads generated outputs before marking a job succeeded (PR #21; fake-transport tests only).
+- [x] Worker handles upload retry and checksum idempotency without completing a job whose output has not been persisted (PR #21).
+- [x] PWA shows media per job with preview, size/type and authenticated download (PR #22; not exercised in a real browser).
+- [x] Optional width/height/duration metadata with bounds validation and owner UI display (PR #24; adapter/worker-supplied, not extracted from file bytes).
+- [ ] Owner-authorized, audited delete (PR #25 open: API only; PWA control still to do).
+- [ ] Retention policy (owner decision; nothing is deleted automatically).
+- [ ] Orphan detection with dry-run report only; design how to identify objects without exposing R2 keys. No automatic cleanup until retention safety is agreed.
+- [ ] Resumable/multipart upload path for media larger than 25 MiB.
 - [ ] Integration tests cover upload failure, retry, duplicate upload, expired lease, missing R2 object and owner access.
-- [ ] Staging smoke test uses private R2 and D1; no production deployment without approval.
+- [ ] Staging smoke test uses private R2 and D1 (apply migrations 0005–0006); no production deployment without approval.
 
 ## Phase 7 — Production hardening and release
 - Structured redacted logs, metrics and alerts for queue age, worker health, lease and error rates.
