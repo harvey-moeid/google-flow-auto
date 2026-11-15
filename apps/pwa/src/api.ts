@@ -5,7 +5,19 @@
  * bundle is public. The password is only ever sent to /api/login and is not kept after the call.
  */
 export type Account = { id: string; slot: number; label: string; email?: string | null; status: string };
-export type Job = { id: string; status: string; account_slot: number; account_label: string; engine: string };
+export type Job = {
+  id: string;
+  status: string;
+  account_slot: number;
+  account_label: string;
+  engine: string;
+  project_id?: string;
+  scene_order?: number | null;
+  error_code?: string | null;
+  retry_of?: string | null;
+  cancel_requested?: number;
+  created_at?: string;
+};
 export type Page<T> = { items: T[]; next_cursor: string | null };
 
 // Empty in production (same-origin, API served under /api on the same hostname).
@@ -32,6 +44,24 @@ const MESSAGES: Record<string, string> = {
   rate_limited: "Terlalu banyak percobaan. Coba lagi sebentar lagi.",
   validation_failed: "Data tidak valid. Periksa isian Anda.",
   server_misconfigured: "Server belum dikonfigurasi dengan benar.",
+  project_archived: "Project diarsipkan. Pulihkan dulu untuk mengubahnya.",
+  project_busy: "Project masih punya job yang antre atau berjalan.",
+  project_not_found: "Project tidak ditemukan.",
+  scene_not_found: "Scene tidak ditemukan.",
+  scene_locked: "Scene ini punya job yang antre atau berjalan, jadi belum bisa diubah.",
+  scene_busy: "Scene ini masih punya job yang antre atau berjalan.",
+  scene_limit_reached: "Jumlah scene sudah mencapai batas maksimum (50).",
+  scene_set_mismatch: "Daftar scene berubah. Muat ulang lalu coba lagi.",
+  scenes_changed: "Scene berubah sejak Anda meninjau. Periksa ulang sebelum mengirim.",
+  submit_blocked: "Project belum siap dikirim.",
+  account_not_ready: "Akun belum berstatus Ready.",
+  job_not_found: "Job tidak ditemukan.",
+  job_not_retryable: "Hanya job gagal atau dibatalkan yang bisa diulang.",
+  job_not_cancellable: "Job sudah selesai.",
+  job_not_resumable: "Job ini tidak sedang menunggu Anda.",
+  idempotency_key_conflict: "Permintaan ini bentrok dengan pengiriman sebelumnya. Muat ulang dan coba lagi.",
+  live_engine_disabled: "Engine live dinonaktifkan; gunakan mode dry-run.",
+  payload_too_large: "Isian terlalu panjang.",
 };
 
 export function describeError(error: unknown): string {
@@ -84,4 +114,86 @@ export function login(password: string): Promise<{ ok: true; expires_at: string 
 /** Clears the session cookie. */
 export function logout(): Promise<{ ok: true }> {
   return api("/api/logout", { method: "POST", body: "{}" });
+}
+
+// ---------- Phase 3: projects, scenes, review, jobs ----------
+
+export type Project = {
+  id: string;
+  name: string;
+  aspect_ratio: string;
+  status: "draft" | "archived";
+  scene_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+export type Scene = {
+  id: string;
+  scene_order: number;
+  prompt: string;
+  duration_seconds: number;
+  last_job: { id: string; status: string } | null;
+};
+export type ProjectDetail = Project & { scene_count: number; total_seconds: number; scenes: Scene[] };
+export type Problem = { code: string; scene_id?: string };
+export type ReadyAccount = { id: string; slot: number; label: string };
+export type Readiness = {
+  project_id: string;
+  aspect_ratio: string;
+  scene_count: number;
+  total_seconds: number;
+  account: { id: string; slot: number; label: string; status: string } | null;
+  ready_accounts: ReadyAccount[];
+  problems: Problem[];
+  can_submit: boolean;
+};
+export type TimelineEvent = { event: string; at: string; detail: Record<string, unknown> };
+export type JobDetail = Omit<Job, "cancel_requested"> & {
+  project_name: string;
+  scene_id: string | null;
+  scene_prompt: string | null;
+  attempts: number;
+  max_attempts: number;
+  cancel_requested: boolean;
+  started_at: string | null;
+  finished_at: string | null;
+  timeline: TimelineEvent[];
+};
+
+export const ACTIVE_JOB_STATUSES = ["queued", "claimed", "running", "waiting_for_user"];
+export const FINAL_JOB_STATUSES = ["succeeded", "failed", "cancelled"];
+
+export const STATUS_LABELS: Record<string, string> = {
+  queued: "Antre",
+  claimed: "Diambil worker",
+  running: "Berjalan",
+  waiting_for_user: "Menunggu Anda",
+  succeeded: "Selesai",
+  failed: "Gagal",
+  cancelled: "Dibatalkan",
+};
+
+export const PROBLEM_LABELS: Record<string, string> = {
+  project_archived: "Project diarsipkan.",
+  no_scenes: "Belum ada scene.",
+  account_required: "Pilih satu akun Google.",
+  account_not_found: "Akun tidak ditemukan.",
+  account_not_ready: "Akun belum Ready (perlu login manual di worker).",
+  scene_busy: "Ada scene yang masih punya job antre atau berjalan.",
+};
+
+/** One key per user intention (a form, a button press) so a double tap or a retry never queues twice. */
+export function newKey(): string {
+  return crypto.randomUUID();
+}
+
+export function post<T>(path: string, body: unknown = {}): Promise<T> {
+  return api<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+export function patch<T>(path: string, body: unknown): Promise<T> {
+  return api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+}
+/** Deleting is a POST action (like cancel/resume), so the API only needs GET/POST/PATCH. */
+export function remove<T>(path: string): Promise<T> {
+  return post<T>(`${path}/delete`);
 }
