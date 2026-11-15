@@ -8,6 +8,7 @@ import { auditIfChanged, auditStatement } from "./route-types.ts";
 import type { Ctx, Route } from "./route-types.ts";
 import { workerHealthRoutes } from "./worker-health.ts";
 import { workerRoutes } from "./worker-routes.ts";
+import { googleIdentityRoutes } from "./google-identity-routes.ts";
 import {
   ACCOUNT_ID_RE,
   ASPECT_RATIOS,
@@ -33,7 +34,7 @@ async function me(ctx: Ctx): Promise<Response> {
 
 async function listAccounts(ctx: Ctx): Promise<Response> {
   const { results } = await ctx.env.DB.prepare(
-    "SELECT id,slot,label,email,status,last_login_at,last_used_at,last_error FROM accounts ORDER BY slot",
+    `SELECT a.id,a.slot,a.label,a.email,a.status,a.last_login_at,a.last_used_at,a.last_error,g.verified_at AS google_identity_verified_at FROM accounts a LEFT JOIN account_google_identities g ON g.account_id=a.id ORDER BY a.slot`,
   ).all();
   return jsonResponse({ items: results });
 }
@@ -350,4 +351,4 @@ const ownerRoutes: Route[] = [
   { method: "GET", pattern: /^\/api\/audit$/, write: false, audience: "owner", handler: listAudit },
 ];
 
-export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...mediaRoutes, ...ownerRoutes, ...workerRoutes, ...workerHealthRoutes];
+export const routes: Route[] = [...projectRoutes, ...jobRoutes, ...mediaRoutes, ...ownerRoutes, ...googleIdentityRoutes, ...workerRoutes, ...workerHealthRoutes];

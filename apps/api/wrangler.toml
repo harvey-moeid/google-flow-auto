@@ -68,6 +68,7 @@ APP_ENV = "production"
 # Live (non dry-run) engines stay disabled until Phase 5 qualifies an adapter.
 # This is also the live kill switch: while "false" the queue only hands out dry-run jobs.
 LIVE_ENGINES_ENABLED = "false"
+# Set GOOGLE_CLIENT_ID to the public OAuth Web client ID for Android GIS identity linking.
 
 # Secrets (never put these in this file or in git; each is set once with `wrangler secret put`):
 #   npx wrangler secret put OWNER_PASSWORD   owner login password, at least 10 characters (use a long random one)

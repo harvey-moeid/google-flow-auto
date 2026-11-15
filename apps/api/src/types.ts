@@ -18,6 +18,8 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   /** "true" to allow engines other than dry-run to be queued/claimed. Defaults to disabled (kill switch). */
   LIVE_ENGINES_ENABLED?: string;
+  /** Public Google OAuth Web client ID used by GIS. */
+  GOOGLE_CLIENT_ID?: string;
   RL_READ?: RateLimiter;
   RL_WRITE?: RateLimiter;
   RL_WORKER?: RateLimiter;

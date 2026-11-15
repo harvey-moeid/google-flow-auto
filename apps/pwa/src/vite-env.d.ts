@@ -8,6 +8,8 @@
 interface ImportMetaEnv {
   /** Optional API origin for local development; leave unset in production (same-origin /api). */
   readonly VITE_API_URL?: string;
+  /** Public Google OAuth Web client ID; never a client secret. */
+  readonly VITE_GOOGLE_CLIENT_ID?: string;
 }
 
 interface ImportMeta {

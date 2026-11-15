@@ -37,6 +37,8 @@ jobs:
 
       - name: Build PWA
         run: npm run build:pwa
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
 
       - name: Scan built frontend for secrets
         run: npm run check:secrets
